@@ -1,38 +1,37 @@
 {% extends "base.html" %}
-{% block title %}Privacy — bokehbowl{% endblock %}
+{% block title %}Privacy — Bokehbowl{% endblock %}
 {% block content %}
 <article class="prose">
 <h2>Privacy</h2>
-<p>This instance is operated by <strong>{{ operator_name }}</strong>{% if operator_contact %}
-(<a href="mailto:{{ operator_contact }}">{{ operator_contact }}</a>){% endif %}, who is
+<p>This instance is operated by <strong>{{ operator_name }}</strong>, who is
 responsible for the data collected here.</p>
 
 <h3>What we collect, and why</h3>
-<p>Your name, email address, and postal address — solely so the operator can mail you
+<p>Your name, email address, and postal address, solely so the operator can mail you
 the pictures you signed up for. Your email is used to verify your signup and to send
 sign-in codes. That's it: no marketing, no newsletters.</p>
 
 <h3>What we don't do</h3>
 <p>Your data is never sold or shared with anyone. There are no analytics, no trackers,
 and no third-party scripts on this site. The only cookie is the session cookie that
-keeps you signed in — which is why there's no cookie banner.</p>
+keeps you signed in, which is why there's no cookie banner.</p>
 
 <h3>Where it lives</h3>
 <p>In this instance's own database, controlled by the operator, on whatever hosting
-infrastructure the operator has chosen — a cloud platform or a server of their own.
+infrastructure the operator has chosen: a cloud platform or a server of their own.
 The hosting provider stores data on the operator's behalf; it isn't shared with them
 beyond that. When you update your address, previous versions are kept so past
 mailings stay accountable.</p>
-<p><em>Running your own instance? This page is a generic default — the project can't
+{# Running your own instance? This page is a generic default — the project can't
 know whether you deploy to Railway, Fly.io, Cloudflare, or a box in your closet.
-Replace it with the specifics of your setup by dropping a <code>privacy.html</code>
-into <code>instance/templates/</code>.</em></p>
+Replace it with the specifics of your setup by dropping a privacy.html
+into instance/templates/. #}
 
 <h3>Your choices</h3>
 <p>You can view and edit your details, or unregister, any time from your
 <a href="/account">account page</a>. Unregistering stops all future mailings
-immediately. To have your data fully deleted, contact the operator{% if operator_contact %}
-at <a href="mailto:{{ operator_contact }}">{{ operator_contact }}</a>{% endif %} and it
+immediately. To have your data fully deleted, contact the operator{% if operator_email %}
+at <a href="mailto:{{ operator_email }}">{{ operator_email }}</a>{% endif %} and it
 will be removed.</p>
 </article>
 {% endblock %}

@@ -29,7 +29,7 @@ def test_about_page(client):
     assert page.status_code == 200
     assert 'class="prose"' in page.text
     assert "Testy Operator" in page.text
-    assert "operator@example.com" in page.text
+    assert "operator@example.com" not in page.text
 
 
 def test_security_headers(client):

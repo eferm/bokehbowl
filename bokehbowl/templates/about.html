@@ -1,17 +1,17 @@
 {% extends "base.html" %}
-{% block title %}About — bokehbowl{% endblock %}
+{% block title %}About — Bokehbowl{% endblock %}
 {% block content %}
 <article class="prose">
 <h2>About this instance</h2>
-<p>This instance of bokehbowl is run by <strong>{{ operator_name }}</strong>{% if operator_contact %}
-(<a href="mailto:{{ operator_contact }}">{{ operator_contact }}</a>){% endif %}.</p>
+<p>This instance of bokehbowl is run by <strong>{{ operator_name }}</strong>.</p>
 <p>bokehbowl is a small open-source project for mailing pictures to people who
-ask for one — free of charge, just for fun. This page is where the person running this
-particular copy introduces themselves: who they are, what kind of photos they take,
-and why you might trust them with your mailing address.</p>
-<p><em>Running your own instance? Replace this page by dropping an
-<code>about.html</code> into <code>instance/templates/</code>.</em></p>
-<p>This is a free hobby service, offered as-is, with no warranty of any kind — and no
-guarantee a picture ever arrives, though that's the whole point of trying.</p>
+ask for one, free of charge, just for fun.</p>
+{# This page is where the person running this particular copy introduces
+themselves: who they are, what kind of photos they take, and why you might
+trust them with your mailing address. #}
+{# Running your own instance? Replace this page by dropping an
+about.html into instance/templates/. #}
+<p>This is a free hobby service, offered as-is, with no warranty of any kind and no
+guarantee a picture ever arrives.</p>
 </article>
 {% endblock %}
