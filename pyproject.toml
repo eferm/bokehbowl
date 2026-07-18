@@ -1,0 +1,36 @@
+[project]
+name = "bokehbowl"
+version = "0.1.0"
+description = "A tiny web app for mailing postcards to people who ask for one"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.18.5",
+    "fastapi>=0.139.0",
+    "itsdangerous>=2.2.0",
+    "jinja2>=3.1.6",
+    "python-multipart>=0.0.32",
+    "sqlalchemy>=2.0.51",
+    "uvicorn[standard]>=0.51.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "ruff>=0.15.21",
+]
+
+[tool.alembic]
+script_location = "migrations"
+prepend_sys_path = ["."]
+
+[tool.ruff]
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

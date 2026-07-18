@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<p>I take photos. I print them as postcards. I mail them to people, free of charge.
+Leave your address and one will show up eventually.</p>
+
+<form method="post" action="/signup">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <fieldset>
+    <legend>Send me a postcard</legend>
+    <p><label>Name<br><input name="name" required autocomplete="name"></label></p>
+    <p><label>Email<br><input name="email" type="email" required autocomplete="email"></label></p>
+    <p><label>Address line 1<br><input name="address_line1" required autocomplete="address-line1"></label></p>
+    <p><label>Address line 2 (optional)<br><input name="address_line2" autocomplete="address-line2"></label></p>
+    <p><label>City<br><input name="city" required autocomplete="address-level2"></label></p>
+    <p><label>State / region<br><input name="region" autocomplete="address-level1"></label></p>
+    <p><label>Postal code<br><input name="postal_code" required autocomplete="postal-code"></label></p>
+    <p><label>Country<br><input name="country" required autocomplete="country-name"></label></p>
+    <p><button type="submit">Sign up</button></p>
+  </fieldset>
+</form>
+{% endblock %}
