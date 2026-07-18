@@ -53,8 +53,7 @@ MAIL_BACKENDS = {
 
 
 def read_git_commit() -> str | None:
-    """Best-effort: the checked-out commit, read straight from .git files so it
-    works where the git binary isn't installed (e.g. the container)."""
+    """The checked-out commit, read from .git files without the git binary."""
     try:
         head = Path(".git/HEAD").read_text().strip()
         if not head.startswith("ref: "):

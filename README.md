@@ -106,7 +106,7 @@ that's how your personal about page becomes everyone's default.
 ## Admin & data model
 
 `/admin` shows the raw database tables, one view per table (columns come straight from
-the schema), each exportable as CSV:
+the schema), each exportable as CSV. Primary keys are UUIDv7 strings:
 
 - **recipients** — one row per person, current state. *Unregister* here is a soft
   delete (timestamp); people can also unregister/rejoin themselves from their account

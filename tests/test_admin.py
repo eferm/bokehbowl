@@ -1,8 +1,18 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from bokehbowl.db import Recipient, RecipientVersion
+from bokehbowl.db import Mailpiece, Recipient, RecipientVersion
 from tests.conftest import ADMIN_PASSWORD, csrf_from, sign_up_and_verify
+
+
+def sole_recipient_id(client) -> str:
+    with Session(client.app.state.engine) as db:
+        return db.scalars(select(Recipient.id)).one()
+
+
+def sole_mailpiece_id(client) -> str:
+    with Session(client.app.state.engine) as db:
+        return db.scalars(select(Mailpiece.id)).one()
 
 
 def admin_login(client) -> str:
@@ -113,11 +123,12 @@ def test_mailpieces_table_renders_empty(client, mailer):
 def test_admin_unregister_is_soft_and_idempotent(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
-    client.post("/admin/recipients/1/unregister", data={"csrf": csrf})
+    recipient_id = sole_recipient_id(client)
+    client.post(f"/admin/recipients/{recipient_id}/unregister", data={"csrf": csrf})
     with Session(client.app.state.engine) as db:
         first = db.scalar(select(Recipient.unsubscribed_at))
         assert first is not None
-    client.post("/admin/recipients/1/unregister", data={"csrf": csrf})
+    client.post(f"/admin/recipients/{recipient_id}/unregister", data={"csrf": csrf})
     with Session(client.app.state.engine) as db:
         assert db.scalar(select(Recipient.unsubscribed_at)) == first
 
@@ -125,10 +136,11 @@ def test_admin_unregister_is_soft_and_idempotent(client, mailer):
 def test_admin_reregister(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
-    client.post("/admin/recipients/1/unregister", data={"csrf": csrf})
+    recipient_id = sole_recipient_id(client)
+    client.post(f"/admin/recipients/{recipient_id}/unregister", data={"csrf": csrf})
     page = client.get("/admin?table=recipients").text
     assert "Reregister" in page and "Unregister" not in page
-    client.post("/admin/recipients/1/reregister", data={"csrf": csrf})
+    client.post(f"/admin/recipients/{recipient_id}/reregister", data={"csrf": csrf})
     with Session(client.app.state.engine) as db:
         assert db.scalar(select(Recipient.unsubscribed_at)) is None
     page = client.get("/admin?table=recipients").text
@@ -146,22 +158,24 @@ def create_mailing(client, csrf, title="sailboat postcard") -> str:
 def test_mailing_workflow(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
+    recipient_id = sole_recipient_id(client)
     detail_url = create_mailing(client, csrf)
 
     detail = client.get(detail_url).text
     assert "To send (1)" in detail
     assert "Ada Lovelace" in detail
 
-    client.post(f"{detail_url}/send/1", data={"csrf": csrf})
+    client.post(f"{detail_url}/send/{recipient_id}", data={"csrf": csrf})
     detail = client.get(detail_url).text
     assert "To send (0)" in detail
     assert "Sent (1)" in detail
 
-    client.post(f"{detail_url}/send/1", data={"csrf": csrf})
+    client.post(f"{detail_url}/send/{recipient_id}", data={"csrf": csrf})
     detail = client.get(detail_url).text
     assert "Sent (1)" in detail
 
-    client.post("/admin/mailpieces/1/delete", data={"csrf": csrf})
+    mailpiece_id = sole_mailpiece_id(client)
+    client.post(f"/admin/mailpieces/{mailpiece_id}/delete", data={"csrf": csrf})
     detail = client.get(detail_url).text
     assert "To send (1)" in detail
     assert "Sent (0)" in detail
@@ -185,12 +199,10 @@ def test_mailpiece_pins_current_address_version(client, mailer):
     )
     csrf = admin_login(client)
     detail_url = create_mailing(client, csrf)
-    client.post(f"{detail_url}/send/1", data={"csrf": csrf})
+    client.post(f"{detail_url}/send/{sole_recipient_id(client)}", data={"csrf": csrf})
     detail = client.get(detail_url).text
     assert "1 Ockham Park" in detail
     with Session(client.app.state.engine) as db:
-        from bokehbowl.db import Mailpiece
-
         mailpiece = db.scalars(select(Mailpiece)).one()
         assert mailpiece.recipient_version.address_line1 == "1 Ockham Park"
 
@@ -198,7 +210,8 @@ def test_mailpiece_pins_current_address_version(client, mailer):
 def test_unregistered_excluded_from_mailing_list(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
-    client.post("/admin/recipients/1/unregister", data={"csrf": csrf})
+    recipient_id = sole_recipient_id(client)
+    client.post(f"/admin/recipients/{recipient_id}/unregister", data={"csrf": csrf})
     detail_url = create_mailing(client, csrf)
     assert "To send (0)" in client.get(detail_url).text
 
@@ -215,7 +228,7 @@ def test_late_signup_excluded_from_default_list_but_sendable(client, mailer):
     labels = client.get(f"{detail_url}/labels.csv")
     assert "Ada Lovelace" not in labels.text
 
-    client.post(f"{detail_url}/send/1", data={"csrf": csrf})
+    client.post(f"{detail_url}/send/{sole_recipient_id(client)}", data={"csrf": csrf})
     detail = client.get(detail_url).text
     assert "Sent (1)" in detail
     assert "Signed up after this mailing" not in detail
@@ -227,7 +240,7 @@ def test_labels_csv_lists_pending_only(client, mailer):
     detail_url = create_mailing(client, csrf)
     labels = client.get(f"{detail_url}/labels.csv")
     assert "Ada Lovelace" in labels.text
-    client.post(f"{detail_url}/send/1", data={"csrf": csrf})
+    client.post(f"{detail_url}/send/{sole_recipient_id(client)}", data={"csrf": csrf})
     labels = client.get(f"{detail_url}/labels.csv")
     assert "Ada Lovelace" not in labels.text
 

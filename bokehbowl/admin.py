@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from bokehbowl.auth import csrf_token, require_csrf
 from bokehbowl.db import (
@@ -29,11 +29,11 @@ class AdminRequired(Exception):
 
 router = APIRouter(prefix="/admin")
 
-TABLES: dict[str, type[Base]] = {
-    "recipients": Recipient,
-    "recipient_versions": RecipientVersion,
-    "mailings": Mailing,
-    "mailpieces": Mailpiece,
+TABLES: dict[str, tuple[type[Base], InstrumentedAttribute]] = {
+    "recipients": (Recipient, Recipient.created_at),
+    "recipient_versions": (RecipientVersion, RecipientVersion.valid_from),
+    "mailings": (Mailing, Mailing.created_at),
+    "mailpieces": (Mailpiece, Mailpiece.sent_at),
 }
 
 
@@ -42,7 +42,7 @@ def require_admin(request: Request) -> None:
         raise AdminRequired()
 
 
-def require_table(name: str) -> type[Base]:
+def require_table(name: str) -> tuple[type[Base], InstrumentedAttribute]:
     if name not in TABLES:
         raise HTTPException(status_code=404)
     return TABLES[name]
@@ -52,9 +52,11 @@ def columns_of(model: type[Base]) -> list[str]:
     return [column.key for column in model.__table__.columns]
 
 
-def rows_of(db: Session, model: type[Base]) -> list[list[object]]:
+def rows_of(
+    db: Session, model: type[Base], timestamp: InstrumentedAttribute
+) -> list[list[object]]:
     columns = columns_of(model)
-    objects = db.scalars(select(model).order_by(model.id.desc()))
+    objects = db.scalars(select(model).order_by(timestamp.desc()))
     return [[getattr(obj, column) for column in columns] for obj in objects]
 
 
@@ -97,10 +99,10 @@ def dashboard(
     request: Request, db: Db, templates: Templates, table: str = "recipients"
 ):
     require_admin(request)
-    model = require_table(table)
+    model, timestamp = require_table(table)
     counts = {
         name: db.scalar(select(func.count()).select_from(m))
-        for name, m in TABLES.items()
+        for name, (m, _) in TABLES.items()
     }
     return templates.TemplateResponse(
         request,
@@ -109,7 +111,7 @@ def dashboard(
             "csrf": csrf_token(request),
             "table": table,
             "columns": columns_of(model),
-            "rows": rows_of(db, model),
+            "rows": rows_of(db, model, timestamp),
             "counts": counts,
         },
     )
@@ -117,7 +119,7 @@ def dashboard(
 
 @router.post("/recipients/{recipient_id}/unregister")
 def unregister(
-    request: Request, db: Db, recipient_id: int, csrf: Annotated[str, Form()]
+    request: Request, db: Db, recipient_id: str, csrf: Annotated[str, Form()]
 ):
     require_admin(request)
     require_csrf(request, csrf)
@@ -132,7 +134,7 @@ def unregister(
 
 @router.post("/recipients/{recipient_id}/reregister")
 def reregister(
-    request: Request, db: Db, recipient_id: int, csrf: Annotated[str, Form()]
+    request: Request, db: Db, recipient_id: str, csrf: Annotated[str, Form()]
 ):
     require_admin(request)
     require_csrf(request, csrf)
@@ -147,11 +149,11 @@ def reregister(
 @router.get("/export.csv")
 def export(request: Request, db: Db, table: str = "recipients"):
     require_admin(request)
-    model = require_table(table)
+    model, timestamp = require_table(table)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(columns_of(model))
-    writer.writerows(rows_of(db, model))
+    writer.writerows(rows_of(db, model, timestamp))
     return Response(
         content=buffer.getvalue(),
         media_type="text/csv",
@@ -173,14 +175,14 @@ def eligible_recipients(db: Session) -> list[Recipient]:
     )
 
 
-def require_mailing(db: Session, mailing_id: int) -> Mailing:
+def require_mailing(db: Session, mailing_id: str) -> Mailing:
     mailing = db.get(Mailing, mailing_id)
     if mailing is None:
         raise HTTPException(status_code=404)
     return mailing
 
 
-def mailpieces_of(db: Session, mailing_id: int) -> list[Mailpiece]:
+def mailpieces_of(db: Session, mailing_id: str) -> list[Mailpiece]:
     return list(
         db.scalars(
             select(Mailpiece)
@@ -190,7 +192,7 @@ def mailpieces_of(db: Session, mailing_id: int) -> list[Mailpiece]:
     )
 
 
-def unsent_recipients(db: Session, mailing_id: int) -> list[Recipient]:
+def unsent_recipients(db: Session, mailing_id: str) -> list[Recipient]:
     sent_ids = {mailpiece.recipient_id for mailpiece in mailpieces_of(db, mailing_id)}
     return [r for r in eligible_recipients(db) if r.id not in sent_ids]
 
@@ -230,7 +232,7 @@ def create_mailing(
 
 
 @router.get("/mailings/{mailing_id}")
-def mailing_detail(request: Request, db: Db, templates: Templates, mailing_id: int):
+def mailing_detail(request: Request, db: Db, templates: Templates, mailing_id: str):
     require_admin(request)
     mailing = require_mailing(db, mailing_id)
     return templates.TemplateResponse(
@@ -250,8 +252,8 @@ def mailing_detail(request: Request, db: Db, templates: Templates, mailing_id: i
 def mark_sent(
     request: Request,
     db: Db,
-    mailing_id: int,
-    recipient_id: int,
+    mailing_id: str,
+    recipient_id: str,
     csrf: Annotated[str, Form()],
 ):
     require_admin(request)
@@ -279,7 +281,7 @@ def mark_sent(
 
 @router.post("/mailpieces/{mailpiece_id}/delete")
 def undo_mailpiece(
-    request: Request, db: Db, mailpiece_id: int, csrf: Annotated[str, Form()]
+    request: Request, db: Db, mailpiece_id: str, csrf: Annotated[str, Form()]
 ):
     require_admin(request)
     require_csrf(request, csrf)
@@ -292,7 +294,7 @@ def undo_mailpiece(
 
 
 @router.get("/mailings/{mailing_id}/labels.csv")
-def export_labels(request: Request, db: Db, mailing_id: int):
+def export_labels(request: Request, db: Db, mailing_id: str):
     require_admin(request)
     mailing = require_mailing(db, mailing_id)
     columns = [
