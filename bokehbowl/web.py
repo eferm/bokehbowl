@@ -2,6 +2,7 @@
 
 import secrets
 from collections.abc import Iterator
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
@@ -15,18 +16,19 @@ from pydantic import (
     Field,
     field_validator,
 )
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from bokehbowl.auth import (
     consume_login_code,
-    csrf_token,
     require_csrf,
     send_login_code,
     volume_capped,
 )
-from bokehbowl.db import Recipient, record_version, utcnow
+from bokehbowl.db import Recipient, RecipientSession, record_version, utcnow
 from bokehbowl.mailer import Mailer
+
+RECIPIENT_SESSION_TTL = timedelta(days=30)
 
 
 class LoginRequired(Exception):
@@ -53,17 +55,15 @@ Mail = Annotated[Mailer, Depends(get_mailer)]
 
 
 def require_recipient(request: Request, db: Db) -> Recipient:
-    recipient_id = request.session.get("recipient_id")
-    if recipient_id is None:
+    recipient_token = request.session.get("recipient_token")
+    if not isinstance(recipient_token, str):
         raise LoginRequired()
-    recipient = db.get(Recipient, recipient_id)
-    if recipient is None:
+    session = db.get(RecipientSession, recipient_token)
+    if session is None:
         raise LoginRequired()
-    if recipient.session_token is None or not secrets.compare_digest(
-        recipient.session_token, request.session.get("recipient_token", "")
-    ):
+    if session.created_at < utcnow() - RECIPIENT_SESSION_TTL:
         raise LoginRequired()
-    return recipient
+    return session.recipient
 
 
 CurrentRecipient = Annotated[Recipient, Depends(require_recipient)]
@@ -131,9 +131,7 @@ def apply_address(recipient: Recipient, form: AddressForm) -> None:
 
 @router.get("/")
 def index(request: Request, templates: Templates):
-    return templates.TemplateResponse(
-        request, "index.html", {"csrf": csrf_token(request), "error": None}
-    )
+    return templates.TemplateResponse(request, "index.html", {"error": None})
 
 
 @router.post("/signup")
@@ -150,7 +148,6 @@ def signup(
             request,
             "index.html",
             {
-                "csrf": csrf_token(request),
                 "error": (
                     "Sign-in codes are temporarily unavailable. Try again in an hour."
                 ),
@@ -175,9 +172,7 @@ def signup(
 
 @router.get("/login")
 def login_form(request: Request, templates: Templates):
-    return templates.TemplateResponse(
-        request, "login.html", {"csrf": csrf_token(request), "error": None}
-    )
+    return templates.TemplateResponse(request, "login.html", {"error": None})
 
 
 @router.post("/login")
@@ -194,7 +189,6 @@ def login(
             request,
             "login.html",
             {
-                "csrf": csrf_token(request),
                 "error": (
                     "Sign-in codes are temporarily unavailable. Try again in an hour."
                 ),
@@ -213,7 +207,7 @@ def verify_form(request: Request, templates: Templates, email: str):
     return templates.TemplateResponse(
         request,
         "verify.html",
-        {"csrf": csrf_token(request), "email": normalize_email(email), "error": None},
+        {"email": normalize_email(email), "error": None},
     )
 
 
@@ -225,12 +219,12 @@ def verify(
     form: Annotated[VerifyForm, Form()],
 ):
     address = form.email
-    if not consume_login_code(db, address, form.code, utcnow()):
+    now = utcnow()
+    if not consume_login_code(db, address, form.code, now):
         return templates.TemplateResponse(
             request,
             "verify.html",
             {
-                "csrf": csrf_token(request),
                 "email": address,
                 "error": "That code didn't work. Check it, or request a new one.",
             },
@@ -239,14 +233,23 @@ def verify(
     recipient = db.scalar(select(Recipient).where(Recipient.email == address))
     if recipient is None:
         raise LoginRequired()
-    if recipient.verified_at is None:
-        recipient.verified_at = utcnow()
-    if recipient.session_token is None:
-        recipient.session_token = secrets.token_urlsafe(32)
-    request.session["recipient_id"] = recipient.id
-    request.session["recipient_token"] = recipient.session_token
+    newly_verified = recipient.verified_at is None
+    if newly_verified:
+        recipient.verified_at = now
+    db.execute(
+        delete(RecipientSession).where(
+            RecipientSession.created_at < now - RECIPIENT_SESSION_TTL
+        )
+    )
+    session = RecipientSession(
+        recipient_id=recipient.id,
+        token=secrets.token_urlsafe(32),
+    )
+    db.add(session)
+    request.session["recipient_token"] = session.token
     db.commit()
-    return RedirectResponse("/account", status_code=303)
+    destination = "/account?created=1" if newly_verified else "/account"
+    return RedirectResponse(destination, status_code=303)
 
 
 @router.get("/account")
@@ -255,8 +258,8 @@ def account(request: Request, templates: Templates, recipient: CurrentRecipient)
         request,
         "account.html",
         {
-            "csrf": csrf_token(request),
             "recipient": recipient,
+            "created": request.query_params.get("created") == "1",
             "saved": "saved" in request.query_params,
         },
     )
@@ -278,9 +281,10 @@ def update_account(
 @router.post("/account/unregister")
 def unregister(request: Request, db: Db, recipient: CurrentRecipient):
     recipient.unsubscribed_at = utcnow()
-    recipient.session_token = None
     db.add(recipient)
-    request.session.pop("recipient_id", None)
+    db.execute(
+        delete(RecipientSession).where(RecipientSession.recipient_id == recipient.id)
+    )
     request.session.pop("recipient_token", None)
     return RedirectResponse("/goodbye", status_code=303)
 
@@ -308,9 +312,11 @@ def goodbye(request: Request, templates: Templates):
 
 
 @router.post("/logout")
-def logout(request: Request, db: Db, recipient: CurrentRecipient):
-    recipient.session_token = None
-    db.add(recipient)
-    request.session.pop("recipient_id", None)
+def logout(request: Request, db: Db):
+    recipient_token = request.session.get("recipient_token")
+    if isinstance(recipient_token, str):
+        db.execute(
+            delete(RecipientSession).where(RecipientSession.token == recipient_token)
+        )
     request.session.pop("recipient_token", None)
     return RedirectResponse("/", status_code=303)

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}About — bokehbowl{% endblock %}
 {% block content %}
+<article class="prose">
 <h2>About this instance</h2>
 <p>This instance of bokehbowl is run by <strong>{{ operator_name }}</strong>{% if operator_contact %}
 (<a href="mailto:{{ operator_contact }}">{{ operator_contact }}</a>){% endif %}.</p>
@@ -12,4 +13,5 @@ and why you might trust them with your mailing address.</p>
 <code>about.html</code> into <code>instance/templates/</code>.</em></p>
 <p>This is a free hobby service, offered as-is, with no warranty of any kind — and no
 guarantee a picture ever arrives, though that's the whole point of trying.</p>
+</article>
 {% endblock %}

@@ -1,11 +1,14 @@
 {% extends "base.html" %}
+{% block body_class %}admin-login{% endblock %}
 {% block title %}Admin — bokehbowl{% endblock %}
 {% block content %}
-<h2>Admin sign-in</h2>
-{% if error %}<p role="alert"><strong>{{ error }}</strong></p>{% endif %}
-<form method="post" action="/admin/login">
-  <input type="hidden" name="csrf" value="{{ csrf }}">
-  <p><label>Password<br><input name="password" type="password" required autofocus></label></p>
-  <p><button type="submit">Sign in</button></p>
-</form>
+<div class="form-page">
+  <h1>Admin</h1>
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <form class="form-stack" method="post" action="/admin/login">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="form-label">Password <input class="form-control" name="password" type="password" required autofocus></label>
+    <button type="submit">Sign in</button>
+  </form>
+</div>
 {% endblock %}

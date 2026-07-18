@@ -3,21 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" href="/favicon.ico">
+  <link rel="icon" type="image/svg+xml" href="/favicon.ico">
+  <link rel="stylesheet" href="/static/site.css">
   <title>{% block title %}bokehbowl{% endblock %}</title>
 </head>
-<body>
-  <header>
-    <h1><a href="/">bokehbowl</a></h1>
-    <nav><a href="/account">Your account</a></nav>
+<body class="{% block body_class %}photo-theme{% endblock %}">
+  <div class="site-shell">
+  <header class="site-header">
+    <a class="site-brand" href="/">bokehbowl</a>
+    <nav class="site-nav">
+      <a href="/account">Account</a>
+      {% if request.session.get("recipient_token") %}
+      <form class="header-signout" method="post" action="/logout">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit">Sign out</button>
+      </form>
+      {% endif %}
+    </nav>
   </header>
-  <main>
+  <main class="site-content">
     {% block content %}{% endblock %}
   </main>
-  <footer>
-    <p><small>A free picture, mailed to you. Run by {{ operator_name }}.</small></p>
-    <p><small><a href="/about">About</a> · <a href="/privacy">Privacy</a></small></p>
-    <p><small>Powered by <a href="https://github.com/eferm/bokehbowl">bokehbowl</a>{% if app_commit %} <code>{{ app_commit[:7] }}</code>{% endif %}</small></p>
+  <footer class="site-footer">
+    <span>Free pictures, mailed occasionally.</span>
+    <span><a href="/about">About</a> · <a href="/privacy">Privacy</a></span>
+    <span>Powered by <a href="https://github.com/eferm/bokehbowl" target="_blank" rel="noopener noreferrer">bokehbowl</a>{% if app_commit %} <code>{{ app_commit[:7] }}</code>{% endif %}</span>
   </footer>
+  </div>
 </body>
 </html>

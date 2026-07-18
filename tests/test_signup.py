@@ -1,12 +1,13 @@
 import base64
 import json
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from bokehbowl import auth
-from bokehbowl.db import LoginCode, Recipient
+from bokehbowl import auth, web
+from bokehbowl.db import LoginCode, Recipient, RecipientSession, utcnow
 from tests.conftest import SIGNUP_FORM, csrf_from, sign_up_and_verify
 
 
@@ -16,16 +17,35 @@ def test_signup_sends_code_and_verify_logs_in(client, mailer):
     assert account.status_code == 200
     assert "ada@example.com" in account.text
     assert "Ada Lovelace" in account.text
+    assert "Full Name" in account.text
+    assert "State / Province" in account.text
+    assert "Postal Code" in account.text
 
 
-def test_session_cookie_carries_uuid(client, mailer):
-    """The session cookie payload is client-readable base64; the recipient id
-    inside is a UUID string."""
+def test_first_signup_shows_confirmation(client, mailer):
+    csrf = csrf_from(client.get("/").text)
+    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
+    response = client.post(
+        "/verify",
+        data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
+        follow_redirects=True,
+    )
+    assert "You're on the list." in response.text
+
+
+def test_authenticated_header_offers_sign_out(client, mailer):
+    sign_up_and_verify(client, mailer)
+    assert "Sign out" in client.get("/").text
+
+
+def test_session_cookie_carries_token(client, mailer):
+    """The client-readable session payload contains only an opaque token."""
     sign_up_and_verify(client, mailer)
     encoded = client.cookies["session"].split(".")[0]
     payload = json.loads(base64.b64decode(encoded + "=" * (-len(encoded) % 4)))
-    assert isinstance(payload["recipient_id"], str)
-    assert len(payload["recipient_id"]) == 36
+    assert "recipient_id" not in payload
+    assert isinstance(payload["recipient_token"], str)
+    assert len(payload["recipient_token"]) == 43
 
 
 def test_email_is_normalized_and_not_duplicated(client, mailer):
@@ -109,6 +129,48 @@ def test_cookie_replay_rejected_after_unregister(client, mailer):
     assert client.get("/account", follow_redirects=False).status_code == 303
 
 
+def test_logout_only_ends_current_device_session(client, mailer):
+    sign_up_and_verify(client, mailer)
+    csrf = csrf_from(client.get("/account").text)
+
+    with Session(client.app.state.engine) as db:
+        current_session = db.scalars(select(RecipientSession)).one()
+        db.add(
+            RecipientSession(
+                recipient_id=current_session.recipient_id,
+                token="another-device-session",
+            )
+        )
+        db.commit()
+
+    response = client.post("/logout", data={"csrf": csrf}, follow_redirects=False)
+    assert response.status_code == 303
+
+    with Session(client.app.state.engine) as db:
+        sessions = db.scalars(select(RecipientSession)).all()
+        assert [session.token for session in sessions] == ["another-device-session"]
+
+
+def test_verification_prunes_expired_recipient_sessions(client, mailer):
+    sign_up_and_verify(client, mailer)
+    with Session(client.app.state.engine) as db:
+        session = db.scalars(select(RecipientSession)).one()
+        session.created_at = utcnow() - web.RECIPIENT_SESSION_TTL - timedelta(
+            seconds=1
+        )
+        db.commit()
+
+    csrf = csrf_from(client.get("/").text)
+    client.post("/login", data={"csrf": csrf, "email": "ada@example.com"})
+    client.post(
+        "/verify",
+        data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
+    )
+
+    with Session(client.app.state.engine) as db:
+        assert len(db.scalars(select(RecipientSession)).all()) == 1
+
+
 def test_signup_state_survives_mailer_failure(client, mailer, monkeypatch):
     def boom(to, subject, body):
         raise RuntimeError("smtp down")
@@ -147,7 +209,8 @@ def test_stale_cookie_cannot_log_out_new_session(client, mailer):
 
     client.cookies = stale
     replay = client.post("/logout", data={"csrf": csrf}, follow_redirects=False)
-    assert replay.headers["location"] == "/login"
+    assert replay.headers["location"] == "/"
+    assert "Sign out" not in client.get("/").text
     client.cookies = fresh
     assert client.get("/account").status_code == 200
 

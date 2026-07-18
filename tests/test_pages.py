@@ -1,11 +1,21 @@
-def test_footer_names_operator(client):
-    assert "Testy Operator" in client.get("/").text
+def test_home_page_uses_gallery_design(client):
+    page = client.get("/").text
+    assert 'class="photo-theme home"' in page
+    assert "Photographs are better on paper." in page
+    assert "Free pictures, mailed occasionally." in page
+
+
+def test_site_stylesheet_served(client):
+    response = client.get("/static/site.css")
+    assert response.status_code == 200
+    assert "text/css" in response.headers["content-type"]
 
 
 def test_favicon_served(client):
     response = client.get("/favicon.ico")
     assert response.status_code == 200
     assert "svg" in response.headers["content-type"]
+    assert 'href="/favicon.ico"' in client.get("/").text
 
 
 def test_footer_shows_running_commit(client):
@@ -17,6 +27,7 @@ def test_footer_shows_running_commit(client):
 def test_about_page(client):
     page = client.get("/about")
     assert page.status_code == 200
+    assert 'class="prose"' in page.text
     assert "Testy Operator" in page.text
     assert "operator@example.com" in page.text
 
@@ -31,8 +42,15 @@ def test_security_headers(client):
 def test_privacy_page(client):
     page = client.get("/privacy")
     assert page.status_code == 200
+    assert 'class="prose"' in page.text
     assert "Testy Operator" in page.text
     assert "never sold" in page.text
+
+
+def test_goodbye_page_uses_prose_layout(client):
+    page = client.get("/goodbye")
+    assert page.status_code == 200
+    assert 'class="prose"' in page.text
 
 
 def test_signup_rejects_multipart(client):

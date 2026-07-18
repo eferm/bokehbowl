@@ -1,0 +1,15 @@
+{% macro mailing_address_fields(recipient=None) %}
+<fieldset class="form-grid">
+  <legend class="visually-hidden">Your mailing address</legend>
+  <label class="form-label">Full Name <input class="form-control" name="name"{% if recipient %} value="{{ recipient.name }}"{% endif %} required autocomplete="name"></label>
+  {% if not recipient %}
+  <label class="form-label">Email <input class="form-control" name="email" type="email" required autocomplete="email"></label>
+  {% endif %}
+  <label class="form-label field-wide">Address Line 1 <input class="form-control" name="address_line1"{% if recipient %} value="{{ recipient.address_line1 }}"{% endif %} required autocomplete="address-line1"></label>
+  <label class="form-label field-wide">Address Line 2 <input class="form-control" name="address_line2"{% if recipient %} value="{{ recipient.address_line2 or '' }}"{% endif %} autocomplete="address-line2" placeholder="Optional"></label>
+  <label class="form-label">City <input class="form-control" name="city"{% if recipient %} value="{{ recipient.city }}"{% endif %} required autocomplete="address-level2"></label>
+  <label class="form-label">State / Province <input class="form-control" name="region"{% if recipient %} value="{{ recipient.region or '' }}"{% endif %} autocomplete="address-level1" placeholder="If applicable"></label>
+  <label class="form-label">Postal Code <input class="form-control" name="postal_code"{% if recipient %} value="{{ recipient.postal_code }}"{% endif %} required autocomplete="postal-code"></label>
+  <label class="form-label">Country <input class="form-control" name="country"{% if recipient %} value="{{ recipient.country }}"{% endif %} required autocomplete="country-name"></label>
+</fieldset>
+{% endmacro %}

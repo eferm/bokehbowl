@@ -11,13 +11,14 @@ from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
-from bokehbowl.auth import csrf_token, require_csrf
+from bokehbowl.auth import require_csrf
 from bokehbowl.db import (
     AdminSession,
     Base,
     Mailing,
     Mailpiece,
     Recipient,
+    RecipientSession,
     RecipientVersion,
     latest_version,
     utcnow,
@@ -158,9 +159,7 @@ def rows_of(
 
 @router.get("/login")
 def login_form(request: Request, templates: Templates):
-    return templates.TemplateResponse(
-        request, "admin_login.html", {"csrf": csrf_token(request), "error": None}
-    )
+    return templates.TemplateResponse(request, "admin_login.html", {"error": None})
 
 
 @router.post("/login")
@@ -178,7 +177,6 @@ def login(
             request,
             "admin_login.html",
             {
-                "csrf": csrf_token(request),
                 "error": "Too many attempts. Try again later.",
             },
             status_code=429,
@@ -189,7 +187,7 @@ def login(
         return templates.TemplateResponse(
             request,
             "admin_login.html",
-            {"csrf": csrf_token(request), "error": "Wrong password."},
+            {"error": "Wrong password."},
             status_code=401,
         )
     db.execute(
@@ -231,7 +229,6 @@ def dashboard(
         request,
         "admin.html",
         {
-            "csrf": csrf_token(request),
             "table": table,
             "columns": columns_of(model),
             "rows": rows_of(db, model, timestamp),
@@ -245,6 +242,9 @@ def unregister(db: Db, recipient: RecipientById):
     if recipient.unsubscribed_at is None:
         recipient.unsubscribed_at = utcnow()
         db.add(recipient)
+    db.execute(
+        delete(RecipientSession).where(RecipientSession.recipient_id == recipient.id)
+    )
     return RedirectResponse("/admin", status_code=303)
 
 
@@ -331,7 +331,6 @@ def mailing_detail(
         request,
         "mailing.html",
         {
-            "csrf": csrf_token(request),
             "mailing": mailing,
             "pending": pending_recipients(db, mailing),
             "late": late_recipients(db, mailing),
