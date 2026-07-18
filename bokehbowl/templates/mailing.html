@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}{{ postcard.title }} — bokehbowl admin{% endblock %}
+{% block title %}{{ mailing.title }} — bokehbowl admin{% endblock %}
 {% block content %}
-<p><a href="/admin?table=postcards">&larr; all postcards</a></p>
-<h2>{{ postcard.title }}</h2>
-<p>Created {{ postcard.created_at.date() }}.</p>
+<p><a href="/admin?table=mailings">&larr; all mailings</a></p>
+<h2>{{ mailing.title }}</h2>
+<p>Created {{ mailing.created_at.date() }}.</p>
 
 <h3>To send ({{ pending | length }})</h3>
-<p><a href="/admin/postcards/{{ postcard.id }}/labels.csv">Export this list as CSV</a></p>
+<p><a href="/admin/mailings/{{ mailing.id }}/labels.csv">Export this list as CSV</a></p>
 <table border="1" cellpadding="6">
   <thead>
     <tr><th>Name</th><th>Address</th><th>Email</th><th></th></tr>
@@ -22,7 +22,7 @@
       </td>
       <td>{{ r.email }}</td>
       <td>
-        <form method="post" action="/admin/postcards/{{ postcard.id }}/send/{{ r.id }}">
+        <form method="post" action="/admin/mailings/{{ mailing.id }}/send/{{ r.id }}">
           <input type="hidden" name="csrf" value="{{ csrf }}">
           <button type="submit">Mark sent</button>
         </form>
@@ -36,7 +36,7 @@
 
 {% if late %}
 <details>
-  <summary>Signed up after this postcard ({{ late | length }}) — send by choice</summary>
+  <summary>Signed up after this mailing ({{ late | length }}) — send by choice</summary>
   <table border="1" cellpadding="6">
     <thead>
       <tr><th>Name</th><th>Address</th><th>Signed up</th><th></th></tr>
@@ -52,7 +52,7 @@
         </td>
         <td>{{ r.created_at.date() }}</td>
         <td>
-          <form method="post" action="/admin/postcards/{{ postcard.id }}/send/{{ r.id }}">
+          <form method="post" action="/admin/mailings/{{ mailing.id }}/send/{{ r.id }}">
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <button type="submit">Mark sent</button>
           </form>
@@ -64,13 +64,13 @@
 </details>
 {% endif %}
 
-<h3>Sent ({{ sendings | length }})</h3>
+<h3>Sent ({{ mailpieces | length }})</h3>
 <table border="1" cellpadding="6">
   <thead>
-    <tr><th>Name</th><th>Sent</th><th>Address on card</th><th></th></tr>
+    <tr><th>Name</th><th>Sent</th><th>Address on envelope</th><th></th></tr>
   </thead>
   <tbody>
-    {% for s in sendings %}
+    {% for s in mailpieces %}
     <tr>
       <td>{{ s.recipient.name }}</td>
       <td>{{ s.sent_at.date() }}</td>
@@ -80,7 +80,7 @@
         {{ s.recipient_version.country }}
       </td>
       <td>
-        <form method="post" action="/admin/sendings/{{ s.id }}/delete">
+        <form method="post" action="/admin/mailpieces/{{ s.id }}/delete">
           <input type="hidden" name="csrf" value="{{ csrf }}">
           <button type="submit">Undo</button>
         </form>

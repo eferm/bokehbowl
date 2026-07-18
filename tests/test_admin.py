@@ -95,17 +95,17 @@ def test_unchanged_save_appends_no_version(client, mailer):
         assert len(db.scalars(select(RecipientVersion)).all()) == 1
 
 
-def test_postcards_table_renders_empty(client, mailer):
+def test_mailings_table_renders_empty(client, mailer):
     admin_login(client)
-    page = client.get("/admin?table=postcards")
+    page = client.get("/admin?table=mailings")
     assert "<th>title</th>" in page.text
     assert "Nothing here yet." in page.text
 
 
-def test_sendings_table_renders_empty(client, mailer):
+def test_mailpieces_table_renders_empty(client, mailer):
     admin_login(client)
-    page = client.get("/admin?table=sendings")
-    for column in ["postcard_id", "recipient_id", "recipient_version_id", "sent_at"]:
+    page = client.get("/admin?table=mailpieces")
+    for column in ["mailing_id", "recipient_id", "recipient_version_id", "sent_at"]:
         assert f"<th>{column}</th>" in page.text
     assert "Nothing here yet." in page.text
 
@@ -135,18 +135,18 @@ def test_admin_reregister(client, mailer):
     assert "Unregister" in page
 
 
-def create_postcard(client, csrf, title="sailboat photo") -> str:
+def create_mailing(client, csrf, title="sailboat postcard") -> str:
     response = client.post(
-        "/admin/postcards", data={"csrf": csrf, "title": title}, follow_redirects=False
+        "/admin/mailings", data={"csrf": csrf, "title": title}, follow_redirects=False
     )
     assert response.status_code == 303
     return response.headers["location"]
 
 
-def test_postcard_workflow(client, mailer):
+def test_mailing_workflow(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
-    detail_url = create_postcard(client, csrf)
+    detail_url = create_mailing(client, csrf)
 
     detail = client.get(detail_url).text
     assert "To send (1)" in detail
@@ -161,13 +161,13 @@ def test_postcard_workflow(client, mailer):
     detail = client.get(detail_url).text
     assert "Sent (1)" in detail
 
-    client.post("/admin/sendings/1/delete", data={"csrf": csrf})
+    client.post("/admin/mailpieces/1/delete", data={"csrf": csrf})
     detail = client.get(detail_url).text
     assert "To send (1)" in detail
     assert "Sent (0)" in detail
 
 
-def test_sending_pins_current_address_version(client, mailer):
+def test_mailpiece_pins_current_address_version(client, mailer):
     sign_up_and_verify(client, mailer)
     account_csrf = csrf_from(client.get("/account").text)
     client.post(
@@ -184,33 +184,33 @@ def test_sending_pins_current_address_version(client, mailer):
         },
     )
     csrf = admin_login(client)
-    detail_url = create_postcard(client, csrf)
+    detail_url = create_mailing(client, csrf)
     client.post(f"{detail_url}/send/1", data={"csrf": csrf})
     detail = client.get(detail_url).text
     assert "1 Ockham Park" in detail
     with Session(client.app.state.engine) as db:
-        from bokehbowl.db import Sending
+        from bokehbowl.db import Mailpiece
 
-        sending = db.scalars(select(Sending)).one()
-        assert sending.recipient_version.address_line1 == "1 Ockham Park"
+        mailpiece = db.scalars(select(Mailpiece)).one()
+        assert mailpiece.recipient_version.address_line1 == "1 Ockham Park"
 
 
 def test_unregistered_excluded_from_mailing_list(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
     client.post("/admin/recipients/1/unregister", data={"csrf": csrf})
-    detail_url = create_postcard(client, csrf)
+    detail_url = create_mailing(client, csrf)
     assert "To send (0)" in client.get(detail_url).text
 
 
 def test_late_signup_excluded_from_default_list_but_sendable(client, mailer):
     csrf = admin_login(client)
-    detail_url = create_postcard(client, csrf)
+    detail_url = create_mailing(client, csrf)
     sign_up_and_verify(client, mailer)
 
     detail = client.get(detail_url).text
     assert "To send (0)" in detail
-    assert "Signed up after this postcard (1)" in detail
+    assert "Signed up after this mailing (1)" in detail
 
     labels = client.get(f"{detail_url}/labels.csv")
     assert "Ada Lovelace" not in labels.text
@@ -218,13 +218,13 @@ def test_late_signup_excluded_from_default_list_but_sendable(client, mailer):
     client.post(f"{detail_url}/send/1", data={"csrf": csrf})
     detail = client.get(detail_url).text
     assert "Sent (1)" in detail
-    assert "Signed up after this postcard" not in detail
+    assert "Signed up after this mailing" not in detail
 
 
 def test_labels_csv_lists_pending_only(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
-    detail_url = create_postcard(client, csrf)
+    detail_url = create_mailing(client, csrf)
     labels = client.get(f"{detail_url}/labels.csv")
     assert "Ada Lovelace" in labels.text
     client.post(f"{detail_url}/send/1", data={"csrf": csrf})

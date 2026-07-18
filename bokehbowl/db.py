@@ -43,7 +43,7 @@ class Recipient(Base):
     versions: Mapped[list["RecipientVersion"]] = relationship(
         back_populates="recipient"
     )
-    sendings: Mapped[list["Sending"]] = relationship(back_populates="recipient")
+    mailpieces: Mapped[list["Mailpiece"]] = relationship(back_populates="recipient")
 
 
 class RecipientVersion(Base):
@@ -67,35 +67,37 @@ class RecipientVersion(Base):
     recipient: Mapped[Recipient] = relationship(back_populates="versions")
 
 
-class Postcard(Base):
-    """A postcard design or print run — one photo intended for many recipients."""
+class Mailing(Base):
+    """One specific thing mailed to many recipients — a postcard design or print
+    run, a photo, a letter. Each physical copy sent is a Mailpiece. The frontend
+    calls it a postcard; the capability is generic."""
 
-    __tablename__ = "postcards"
+    __tablename__ = "mailings"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
-    sendings: Mapped[list["Sending"]] = relationship(back_populates="postcard")
+    mailpieces: Mapped[list["Mailpiece"]] = relationship(back_populates="mailing")
 
 
-class Sending(Base):
-    """One physical card mailed: a postcard sent to one recipient, at the exact
-    address version printed on the card."""
+class Mailpiece(Base):
+    """One physical piece of mail (USPS's word): a mailing sent to one recipient,
+    at the exact address version written on it."""
 
-    __tablename__ = "sendings"
-    __table_args__ = (UniqueConstraint("postcard_id", "recipient_id"),)
+    __tablename__ = "mailpieces"
+    __table_args__ = (UniqueConstraint("mailing_id", "recipient_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    postcard_id: Mapped[int] = mapped_column(ForeignKey("postcards.id"), index=True)
+    mailing_id: Mapped[int] = mapped_column(ForeignKey("mailings.id"), index=True)
     recipient_id: Mapped[int] = mapped_column(ForeignKey("recipients.id"), index=True)
     recipient_version_id: Mapped[int] = mapped_column(
         ForeignKey("recipient_versions.id")
     )
     sent_at: Mapped[datetime] = mapped_column(default=utcnow)
 
-    postcard: Mapped[Postcard] = relationship(back_populates="sendings")
-    recipient: Mapped[Recipient] = relationship(back_populates="sendings")
+    mailing: Mapped[Mailing] = relationship(back_populates="mailpieces")
+    recipient: Mapped[Recipient] = relationship(back_populates="mailpieces")
     recipient_version: Mapped[RecipientVersion] = relationship()
 
 
