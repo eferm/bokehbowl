@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Check your email — bokehbowl{% endblock %}
+{% block title %}Check your email — Bokehbowl{% endblock %}
 {% block content %}
 <div class="form-page">
   <h1>Check your email</h1>
-  <p>We sent a 6-digit code to <strong>{{ email }}</strong>. Enter it here.</p>
+  <p>If <strong>{{ email }}</strong> has an account a 6-digit code is on its way.</p>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   <form class="form-stack" method="post" action="/verify">
     <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -16,5 +16,6 @@
     <input type="hidden" name="email" value="{{ email }}">
     <button type="submit">Resend code</button>
   </form>
+  <p>No code after a minute? <a href="/">Sign up</a> to create an account with this address.</p>
 </div>
 {% endblock %}
