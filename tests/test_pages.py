@@ -14,6 +14,7 @@ def test_favicon_served(client):
     response = client.get("/favicon.ico")
     assert response.status_code == 200
     assert "svg" in response.headers["content-type"]
+    assert 'href="/favicon.ico"' in client.get("/").text
 
 
 def test_footer_shows_running_commit(client):

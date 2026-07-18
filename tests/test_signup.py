@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from bokehbowl import auth
-from bokehbowl.db import LoginCode, Recipient
+from bokehbowl.db import LoginCode, Recipient, RecipientSession
 from tests.conftest import SIGNUP_FORM, csrf_from, sign_up_and_verify
 
 
@@ -128,6 +128,28 @@ def test_cookie_replay_rejected_after_unregister(client, mailer):
     assert client.get("/account", follow_redirects=False).status_code == 303
 
 
+def test_logout_only_ends_current_device_session(client, mailer):
+    sign_up_and_verify(client, mailer)
+    csrf = csrf_from(client.get("/account").text)
+
+    with Session(client.app.state.engine) as db:
+        current_session = db.scalars(select(RecipientSession)).one()
+        db.add(
+            RecipientSession(
+                recipient_id=current_session.recipient_id,
+                token="another-device-session",
+            )
+        )
+        db.commit()
+
+    response = client.post("/logout", data={"csrf": csrf}, follow_redirects=False)
+    assert response.status_code == 303
+
+    with Session(client.app.state.engine) as db:
+        sessions = db.scalars(select(RecipientSession)).all()
+        assert [session.token for session in sessions] == ["another-device-session"]
+
+
 def test_signup_state_survives_mailer_failure(client, mailer, monkeypatch):
     def boom(to, subject, body):
         raise RuntimeError("smtp down")
@@ -166,7 +188,8 @@ def test_stale_cookie_cannot_log_out_new_session(client, mailer):
 
     client.cookies = stale
     replay = client.post("/logout", data={"csrf": csrf}, follow_redirects=False)
-    assert replay.headers["location"] == "/login"
+    assert replay.headers["location"] == "/"
+    assert "Sign out" not in client.get("/").text
     client.cookies = fresh
     assert client.get("/account").status_code == 200
 

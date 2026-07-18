@@ -18,6 +18,7 @@ from bokehbowl.db import (
     Mailing,
     Mailpiece,
     Recipient,
+    RecipientSession,
     RecipientVersion,
     latest_version,
     utcnow,
@@ -241,6 +242,9 @@ def unregister(db: Db, recipient: RecipientById):
     if recipient.unsubscribed_at is None:
         recipient.unsubscribed_at = utcnow()
         db.add(recipient)
+    db.execute(
+        delete(RecipientSession).where(RecipientSession.recipient_id == recipient.id)
+    )
     return RedirectResponse("/admin", status_code=303)
 
 

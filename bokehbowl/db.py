@@ -45,12 +45,26 @@ class Recipient(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     verified_at: Mapped[datetime | None]
     unsubscribed_at: Mapped[datetime | None]
-    session_token: Mapped[str | None] = mapped_column(String(43))
-
     versions: Mapped[list["RecipientVersion"]] = relationship(
         back_populates="recipient"
     )
+    sessions: Mapped[list["RecipientSession"]] = relationship(
+        back_populates="recipient", cascade="all, delete-orphan"
+    )
     mailpieces: Mapped[list["Mailpiece"]] = relationship(back_populates="recipient")
+
+
+class RecipientSession(Base):
+    """One authenticated browser session for a recipient."""
+
+    __tablename__ = "recipient_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    recipient_id: Mapped[str] = mapped_column(ForeignKey("recipients.id"), index=True)
+    token: Mapped[str] = mapped_column(String(43), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    recipient: Mapped[Recipient] = relationship(back_populates="sessions")
 
 
 class RecipientVersion(Base):

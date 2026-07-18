@@ -15,7 +15,7 @@ from pydantic import (
     Field,
     field_validator,
 )
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from bokehbowl.auth import (
@@ -24,7 +24,7 @@ from bokehbowl.auth import (
     send_login_code,
     volume_capped,
 )
-from bokehbowl.db import Recipient, record_version, utcnow
+from bokehbowl.db import Recipient, RecipientSession, record_version, utcnow
 from bokehbowl.mailer import Mailer
 
 
@@ -53,16 +53,18 @@ Mail = Annotated[Mailer, Depends(get_mailer)]
 
 def require_recipient(request: Request, db: Db) -> Recipient:
     recipient_id = request.session.get("recipient_id")
-    if recipient_id is None:
+    recipient_token = request.session.get("recipient_token")
+    if not isinstance(recipient_id, str) or not isinstance(recipient_token, str):
         raise LoginRequired()
-    recipient = db.get(Recipient, recipient_id)
-    if recipient is None:
+    session = db.scalar(
+        select(RecipientSession).where(
+            RecipientSession.recipient_id == recipient_id,
+            RecipientSession.token == recipient_token,
+        )
+    )
+    if session is None:
         raise LoginRequired()
-    if recipient.session_token is None or not secrets.compare_digest(
-        recipient.session_token, request.session.get("recipient_token", "")
-    ):
-        raise LoginRequired()
-    return recipient
+    return session.recipient
 
 
 CurrentRecipient = Annotated[Recipient, Depends(require_recipient)]
@@ -234,10 +236,13 @@ def verify(
     newly_verified = recipient.verified_at is None
     if newly_verified:
         recipient.verified_at = utcnow()
-    if recipient.session_token is None:
-        recipient.session_token = secrets.token_urlsafe(32)
+    session = RecipientSession(
+        recipient_id=recipient.id,
+        token=secrets.token_urlsafe(32),
+    )
+    db.add(session)
     request.session["recipient_id"] = recipient.id
-    request.session["recipient_token"] = recipient.session_token
+    request.session["recipient_token"] = session.token
     db.commit()
     destination = "/account?created=1" if newly_verified else "/account"
     return RedirectResponse(destination, status_code=303)
@@ -272,8 +277,10 @@ def update_account(
 @router.post("/account/unregister")
 def unregister(request: Request, db: Db, recipient: CurrentRecipient):
     recipient.unsubscribed_at = utcnow()
-    recipient.session_token = None
     db.add(recipient)
+    db.execute(
+        delete(RecipientSession).where(RecipientSession.recipient_id == recipient.id)
+    )
     request.session.pop("recipient_id", None)
     request.session.pop("recipient_token", None)
     return RedirectResponse("/goodbye", status_code=303)
@@ -302,9 +309,16 @@ def goodbye(request: Request, templates: Templates):
 
 
 @router.post("/logout")
-def logout(request: Request, db: Db, recipient: CurrentRecipient):
-    recipient.session_token = None
-    db.add(recipient)
+def logout(request: Request, db: Db):
+    recipient_id = request.session.get("recipient_id")
+    recipient_token = request.session.get("recipient_token")
+    if isinstance(recipient_id, str) and isinstance(recipient_token, str):
+        db.execute(
+            delete(RecipientSession).where(
+                RecipientSession.recipient_id == recipient_id,
+                RecipientSession.token == recipient_token,
+            )
+        )
     request.session.pop("recipient_id", None)
     request.session.pop("recipient_token", None)
     return RedirectResponse("/", status_code=303)
