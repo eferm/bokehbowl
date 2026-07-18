@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from bokehbowl import auth, web
+from bokehbowl.config import load_config
 from bokehbowl.db import LoginCode, Recipient, RecipientSession, utcnow
 from tests.conftest import SIGNUP_FORM, csrf_from, sign_up_and_verify
 
@@ -48,9 +49,25 @@ def test_session_cookie_carries_token(client, mailer):
     assert len(payload["recipient_token"]) == 43
 
 
+def test_verified_signup_notifies_operator(client, mailer):
+    sign_up_and_verify(client, mailer)
+    to, subject, body = mailer.sent[-1]
+    assert to == "notify@example.com"
+    assert subject == "New signup: Ada Lovelace"
+    assert "Ada Lovelace <ada@example.com>" in body
+
+
+def test_notify_email_falls_back_to_operator_email(monkeypatch):
+    monkeypatch.setenv("SESSION_SECRET", "secret")
+    monkeypatch.setenv("ADMIN_PASSWORD", "password")
+    monkeypatch.setenv("OPERATOR_EMAIL", "operator@example.com")
+    monkeypatch.delenv("NOTIFY_EMAIL", raising=False)
+    assert load_config().notify_email == "operator@example.com"
+
+
 def test_email_is_normalized_and_not_duplicated(client, mailer):
     sign_up_and_verify(client, mailer)
-    to, _, _ = mailer.sent[-1]
+    to, _, _ = mailer.sent[0]
     assert to == "ada@example.com"
 
 

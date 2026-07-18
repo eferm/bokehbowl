@@ -32,7 +32,8 @@ class AppConfig:
     cookie_secure: bool
     mail: MailConfig
     operator_name: str
-    operator_contact: str
+    operator_email: str
+    notify_email: str
     commit: str | None
 
 
@@ -72,6 +73,7 @@ def read_git_commit() -> str | None:
 
 
 def load_config() -> AppConfig:
+    operator_email = os.environ.get("OPERATOR_EMAIL", "")
     return AppConfig(
         database_url=os.environ.get("DATABASE_URL", "sqlite:///data/bokehbowl.db"),
         session_secret=os.environ["SESSION_SECRET"],
@@ -79,6 +81,7 @@ def load_config() -> AppConfig:
         cookie_secure=os.environ.get("COOKIE_SECURE", "true") == "true",
         mail=MAIL_BACKENDS[os.environ.get("MAIL_BACKEND", "console")](),
         operator_name=os.environ.get("OPERATOR_NAME", "the operator of this instance"),
-        operator_contact=os.environ.get("OPERATOR_CONTACT", ""),
+        operator_email=operator_email,
+        notify_email=os.environ.get("NOTIFY_EMAIL") or operator_email,
         commit=os.environ.get("GIT_COMMIT") or read_git_commit(),
     )

@@ -70,8 +70,10 @@ beta, so this path is best-effort — the container path above is the supported 
 
 ## Make it yours
 
-Each instance names its operator: set `OPERATOR_NAME` and `OPERATOR_CONTACT` and they
-appear in the footer, the `/about` page, and the `/privacy` page. For a fully custom
+Each instance names its operator: set `OPERATOR_NAME` and `OPERATOR_EMAIL`. The name
+appears on the `/about` and `/privacy` pages; the email appears on `/privacy` and
+receives a notification for each verified signup (`NOTIFY_EMAIL` overrides the
+notification address). For a fully custom
 front or about page, drop templates into `instance/templates/` — they shadow the
 defaults (see the README in that directory). A `favicon.svg` dropped into `instance/`
 replaces the default mailbox icon. Forks commit their

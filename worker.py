@@ -33,7 +33,8 @@ def build_app(env):
             sender=env.MAIL_SENDER,
         ),
         operator_name=env.OPERATOR_NAME,
-        operator_contact=env.OPERATOR_CONTACT,
+        operator_email=env.OPERATOR_EMAIL,
+        notify_email=getattr(env, "NOTIFY_EMAIL", "") or env.OPERATOR_EMAIL,
         commit=getattr(env, "GIT_COMMIT", None),
     )
     engine = create_engine(config.database_url, connect_args={"binding": env.DB})

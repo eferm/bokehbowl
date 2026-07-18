@@ -216,6 +216,8 @@ def verify(
     request: Request,
     db: Db,
     templates: Templates,
+    mailer: Mail,
+    background: BackgroundTasks,
     form: Annotated[VerifyForm, Form()],
 ):
     address = form.email
@@ -236,6 +238,12 @@ def verify(
     newly_verified = recipient.verified_at is None
     if newly_verified:
         recipient.verified_at = now
+        background.add_task(
+            mailer.send,
+            to=request.app.state.config.notify_email,
+            subject=f"New signup: {recipient.name}",
+            body=f"{recipient.name} <{recipient.email}> signed up.",
+        )
     db.execute(
         delete(RecipientSession).where(
             RecipientSession.created_at < now - RECIPIENT_SESSION_TTL

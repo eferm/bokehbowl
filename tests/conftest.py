@@ -20,8 +20,11 @@ class CaptureMailer:
         self.sent.append((to, subject, body))
 
     def last_code(self) -> str:
-        _, _, body = self.sent[-1]
-        return re.search(r"\b(\d{6})\b", body).group(1)
+        for _, _, body in reversed(self.sent):
+            match = re.search(r"\b(\d{6})\b", body)
+            if match:
+                return match.group(1)
+        raise LookupError("no code in sent mail")
 
 
 @pytest.fixture()
@@ -43,7 +46,8 @@ def client(mailer):
             cookie_secure=True,
             mail=ConsoleMail(),
             operator_name="Testy Operator",
-            operator_contact="operator@example.com",
+            operator_email="operator@example.com",
+            notify_email="notify@example.com",
             commit="abc1234def5678",
         ),
         engine=engine,

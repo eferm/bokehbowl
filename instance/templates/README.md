@@ -12,6 +12,6 @@ versions if you run from a fork, or mount this directory into the container
 (`./instance:/app/instance`, already configured in compose.yaml).
 
 Smaller customizations don't need templates at all — set the `OPERATOR_NAME` and
-`OPERATOR_CONTACT` environment variables and the defaults will use them. A
+`OPERATOR_EMAIL` environment variables and the defaults will use them. A
 `favicon.svg` placed one level up, in `instance/` itself, replaces the default
 mailbox icon.
