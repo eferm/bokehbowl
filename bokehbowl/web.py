@@ -245,6 +245,7 @@ def verify(
         recipient.session_token = secrets.token_urlsafe(32)
     request.session["recipient_id"] = recipient.id
     request.session["recipient_token"] = recipient.session_token
+    db.commit()
     return RedirectResponse("/account", status_code=303)
 
 

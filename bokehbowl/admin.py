@@ -199,6 +199,7 @@ def login(
     db.add(session)
     db.flush()
     request.session["admin_session_id"] = session.id
+    db.commit()
     return RedirectResponse("/admin", status_code=303)
 
 

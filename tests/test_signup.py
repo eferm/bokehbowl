@@ -1,11 +1,12 @@
 import base64
 import json
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from bokehbowl import auth
-from bokehbowl.db import Recipient
+from bokehbowl.db import LoginCode, Recipient
 from tests.conftest import SIGNUP_FORM, csrf_from, sign_up_and_verify
 
 
@@ -106,6 +107,19 @@ def test_cookie_replay_rejected_after_unregister(client, mailer):
     assert unregister.status_code == 303
     client.cookies = saved
     assert client.get("/account", follow_redirects=False).status_code == 303
+
+
+def test_signup_state_survives_mailer_failure(client, mailer, monkeypatch):
+    def boom(to, subject, body):
+        raise RuntimeError("smtp down")
+
+    monkeypatch.setattr(mailer, "send", boom)
+    csrf = csrf_from(client.get("/").text)
+    with pytest.raises(RuntimeError):
+        client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
+    with Session(client.app.state.engine) as db:
+        assert db.scalars(select(Recipient)).one()
+        assert db.scalars(select(LoginCode)).one()
 
 
 def test_signup_rejects_address_lists(client, mailer):

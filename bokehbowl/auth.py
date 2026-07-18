@@ -117,12 +117,13 @@ async def require_csrf(request: Request) -> None:
 def send_login_code(
     db: Session, mailer: Mailer, email: str, background: BackgroundTasks
 ) -> None:
-    """Issue a code and enqueue the email, which is sent after the response;
-    silently sends nothing during cooldown or past the volume caps."""
+    """Issue and commit a code, then enqueue the email, which is sent after the
+    response; silently sends nothing during cooldown or past the volume caps."""
     now = utcnow()
     if cooldown_active(db, email, now) or volume_capped(db, now):
         return
     code = issue_login_code(db, email, now)
+    db.commit()
     background.add_task(
         mailer.send,
         to=email,
