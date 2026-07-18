@@ -70,11 +70,10 @@ beta, so this path is best-effort — the container path above is the supported 
 
 ## Make it yours
 
-Each instance names its operator: set `OPERATOR_NAME` and `OPERATOR_EMAIL`. The name
-appears on the `/about` and `/privacy` pages; the email appears on `/privacy` and
-receives a notification for each verified signup (`NOTIFY_EMAIL` overrides the
-notification address). For a fully custom
-front or about page, drop templates into `instance/templates/` — they shadow the
+Each instance names its operator: set `OPERATOR_NAME` and `OPERATOR_EMAIL`. Both
+appear on the `/privacy` page, and the email receives a notification for each
+verified signup (`NOTIFY_EMAIL` overrides the notification address). For a fully
+custom front page, drop templates into `instance/templates/` — they shadow the
 defaults (see the README in that directory). A `favicon.svg` dropped into `instance/`
 replaces the default mailbox icon. Forks commit their
 `instance/` folder; docker-compose users can just edit it in place (it's mounted into
@@ -110,7 +109,7 @@ no longer guaranteed painless.
 If you're hosting from this repo itself (rather than a fork), keep `main` generic and
 commit your instance files on a `deploy` branch; point your host at that branch and
 update it with `git merge main`. Never merge the deploy branch back into `main` —
-that's how your personal about page becomes everyone's default.
+that's how your personal front page becomes everyone's default.
 
 ## Admin & data model
 

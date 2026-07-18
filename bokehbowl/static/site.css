@@ -149,7 +149,6 @@ a { color: inherit; }
 .site-footer code {
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .85em;
 }
 
 .home-layout {

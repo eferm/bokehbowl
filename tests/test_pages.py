@@ -24,14 +24,6 @@ def test_footer_shows_running_commit(client):
     assert "abc1234def" not in page
 
 
-def test_about_page(client):
-    page = client.get("/about")
-    assert page.status_code == 200
-    assert 'class="prose"' in page.text
-    assert "Testy Operator" in page.text
-    assert "operator@example.com" not in page.text
-
-
 def test_security_headers(client):
     headers = client.get("/").headers
     assert headers["X-Content-Type-Options"] == "nosniff"

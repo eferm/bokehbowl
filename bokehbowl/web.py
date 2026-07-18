@@ -304,11 +304,6 @@ def reregister(request: Request, db: Db, recipient: CurrentRecipient):
     return RedirectResponse("/account", status_code=303)
 
 
-@router.get("/about")
-def about(request: Request, templates: Templates):
-    return templates.TemplateResponse(request, "about.html", {})
-
-
 @router.get("/privacy")
 def privacy(request: Request, templates: Templates):
     return templates.TemplateResponse(request, "privacy.html", {})

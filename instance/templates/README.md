@@ -3,7 +3,6 @@
 Any template placed in this directory shadows the default of the same name in
 `bokehbowl/templates/`. The intended ones to customize:
 
-- `about.html` — who you are and why people should trust you with their address
 - `index.html` — your front page
 - `privacy.html` — only if the default doesn't describe your instance accurately
 
