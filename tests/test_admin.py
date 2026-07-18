@@ -1,7 +1,8 @@
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from bokehbowl.db import Mailpiece, Recipient, RecipientVersion
+from bokehbowl.db import Mailpiece, Recipient, RecipientVersion, utcnow
 from tests.conftest import ADMIN_PASSWORD, csrf_from, sign_up_and_verify
 
 
@@ -32,10 +33,68 @@ def test_dashboard_requires_login(client):
     assert response.headers["location"] == "/admin/login"
 
 
+def test_admin_cookie_replay_rejected_after_logout(client):
+    csrf = admin_login(client)
+    saved = dict(client.cookies)
+    logout = client.post("/admin/logout", data={"csrf": csrf}, follow_redirects=False)
+    assert logout.status_code == 303
+    client.cookies = saved
+    response = client.get("/admin", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/login"
+
+
 def test_wrong_password_rejected(client):
     csrf = csrf_from(client.get("/admin/login").text)
     response = client.post("/admin/login", data={"csrf": csrf, "password": "nope"})
     assert response.status_code == 401
+
+
+def test_login_throttled_after_repeated_failures(client):
+    csrf = csrf_from(client.get("/admin/login").text)
+    for _ in range(10):
+        response = client.post("/admin/login", data={"csrf": csrf, "password": "nope"})
+        assert response.status_code == 401
+    response = client.post(
+        "/admin/login", data={"csrf": csrf, "password": ADMIN_PASSWORD}
+    )
+    assert response.status_code == 429
+    assert "Too many attempts" in response.text
+
+
+def test_throttle_is_per_client_address(client):
+    csrf = csrf_from(client.get("/admin/login").text)
+    for _ in range(10):
+        response = client.post("/admin/login", data={"csrf": csrf, "password": "nope"})
+        assert response.status_code == 401
+    response = client.post(
+        "/admin/login", data={"csrf": csrf, "password": ADMIN_PASSWORD}
+    )
+    assert response.status_code == 429
+
+    with TestClient(
+        client.app, base_url="https://testserver", client=("10.9.8.7", 999)
+    ) as other:
+        other_csrf = csrf_from(other.get("/admin/login").text)
+        response = other.post(
+            "/admin/login",
+            data={"csrf": other_csrf, "password": ADMIN_PASSWORD},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+
+
+def test_backstop_throttles_across_addresses(client):
+    now = utcnow()
+    client.app.state.admin_login_throttle.failures = {
+        str(index): [now] for index in range(100)
+    }
+    csrf = csrf_from(client.get("/admin/login").text)
+    response = client.post(
+        "/admin/login", data={"csrf": csrf, "password": ADMIN_PASSWORD}
+    )
+    assert response.status_code == 429
+    assert "Too many attempts" in response.text
 
 
 def test_recipients_table_shows_db_columns(client, mailer):
@@ -234,6 +293,18 @@ def test_late_signup_excluded_from_default_list_but_sendable(client, mailer):
     assert "Signed up after this mailing" not in detail
 
 
+def test_mark_sent_rejects_unregistered_recipient(client, mailer):
+    sign_up_and_verify(client, mailer)
+    csrf = admin_login(client)
+    recipient_id = sole_recipient_id(client)
+    detail_url = create_mailing(client, csrf)
+    client.post(f"/admin/recipients/{recipient_id}/unregister", data={"csrf": csrf})
+    response = client.post(f"{detail_url}/send/{recipient_id}", data={"csrf": csrf})
+    assert response.status_code == 409
+    with Session(client.app.state.engine) as db:
+        assert db.scalars(select(Mailpiece)).all() == []
+
+
 def test_labels_csv_lists_pending_only(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
@@ -255,3 +326,16 @@ def test_csv_export_matches_table(client, mailer):
     assert "ada@example.com" in response.text
     versions = client.get("/admin/export.csv?table=recipient_versions")
     assert "valid_from" in versions.text.splitlines()[0]
+
+
+def test_csv_export_neutralizes_formula_cells(client, mailer):
+    sign_up_and_verify(client, mailer)
+    with Session(client.app.state.engine) as db:
+        recipient = db.scalars(select(Recipient)).one()
+        recipient.name = '=HYPERLINK("https://evil.example",1)'
+        db.commit()
+    admin_login(client)
+    response = client.get("/admin/export.csv?table=recipients")
+    assert response.status_code == 200
+    assert "'=HYPERLINK" in response.text
+    assert ",=HYPERLINK" not in response.text

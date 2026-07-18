@@ -1,6 +1,7 @@
 """Outbound email port and its adapters."""
 
 import smtplib
+import ssl
 from email.message import EmailMessage
 from typing import Protocol
 
@@ -31,7 +32,10 @@ class SmtpMailer:
         message["To"] = to
         message["Subject"] = subject
         message.set_content(body)
-        with smtplib.SMTP_SSL(self.config.host, self.config.port) as smtp:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(
+            self.config.host, self.config.port, timeout=10, context=context
+        ) as smtp:
             smtp.login(self.config.username, self.config.password)
             smtp.send_message(message)
 

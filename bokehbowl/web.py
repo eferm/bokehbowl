@@ -1,15 +1,30 @@
 """Public routes: signup, sign-in via email code, and the account page."""
 
+import secrets
 from collections.abc import Iterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from bokehbowl.auth import consume_login_code, csrf_token, require_csrf, send_login_code
+from bokehbowl.auth import (
+    consume_login_code,
+    csrf_token,
+    require_csrf,
+    send_login_code,
+    volume_capped,
+)
 from bokehbowl.db import Recipient, record_version, utcnow
 from bokehbowl.mailer import Mailer
 
@@ -44,27 +59,80 @@ def require_recipient(request: Request, db: Db) -> Recipient:
     recipient = db.get(Recipient, recipient_id)
     if recipient is None:
         raise LoginRequired()
+    if recipient.session_token is None or not secrets.compare_digest(
+        recipient.session_token, request.session.get("recipient_token", "")
+    ):
+        raise LoginRequired()
     return recipient
 
 
 CurrentRecipient = Annotated[Recipient, Depends(require_recipient)]
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_csrf)])
 
 
 def normalize_email(raw: str) -> str:
     return raw.strip().lower()
 
 
-def blank_to_none(raw: str) -> str | None:
-    stripped = raw.strip()
-    return stripped if stripped else None
+NormalizedEmail = Annotated[EmailStr, BeforeValidator(normalize_email)]
+
+
+class AddressForm(BaseModel):
+    """A recipient's name and postal address, whitespace-stripped on entry."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(max_length=200)
+    address_line1: str = Field(max_length=200)
+    address_line2: str | None = Field(default=None, max_length=200)
+    city: str = Field(max_length=120)
+    region: str | None = Field(default=None, max_length=120)
+    postal_code: str = Field(max_length=20)
+    country: str = Field(max_length=120)
+
+    @field_validator("address_line2", "region")
+    @classmethod
+    def blank_to_none(cls, value: str | None) -> str | None:
+        return value or None
+
+
+class SignupForm(AddressForm):
+    """A signup submission: an address plus the email to receive the code at."""
+
+    email: NormalizedEmail
+
+
+class LoginForm(BaseModel):
+    """A login request naming the email to receive the code at."""
+
+    email: NormalizedEmail
+
+
+class VerifyForm(BaseModel):
+    """A code submission: the email and the code sent to it."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    email: NormalizedEmail
+    code: str
+
+
+def apply_address(recipient: Recipient, form: AddressForm) -> None:
+    """Copy the form's address fields onto the recipient."""
+    recipient.name = form.name
+    recipient.address_line1 = form.address_line1
+    recipient.address_line2 = form.address_line2
+    recipient.city = form.city
+    recipient.region = form.region
+    recipient.postal_code = form.postal_code
+    recipient.country = form.country
 
 
 @router.get("/")
 def index(request: Request, templates: Templates):
     return templates.TemplateResponse(
-        request, "index.html", {"csrf": csrf_token(request)}
+        request, "index.html", {"csrf": csrf_token(request), "error": None}
     )
 
 
@@ -72,44 +140,43 @@ def index(request: Request, templates: Templates):
 def signup(
     request: Request,
     db: Db,
+    templates: Templates,
     mailer: Mail,
-    csrf: Annotated[str, Form()],
-    name: Annotated[str, Form()],
-    email: Annotated[str, Form()],
-    address_line1: Annotated[str, Form()],
-    city: Annotated[str, Form()],
-    postal_code: Annotated[str, Form()],
-    country: Annotated[str, Form()],
-    address_line2: Annotated[str, Form()] = "",
-    region: Annotated[str, Form()] = "",
+    background: BackgroundTasks,
+    form: Annotated[SignupForm, Form()],
 ):
-    require_csrf(request, csrf)
-    address = normalize_email(email)
+    if volume_capped(db, utcnow()):
+        return templates.TemplateResponse(
+            request,
+            "index.html",
+            {
+                "csrf": csrf_token(request),
+                "error": (
+                    "Sign-in codes are temporarily unavailable. Try again in an hour."
+                ),
+            },
+            status_code=429,
+        )
+    address = form.email
     existing = db.scalar(select(Recipient).where(Recipient.email == address))
     if existing is None:
-        recipient = Recipient(
-            email=address,
-            name=name.strip(),
-            address_line1=address_line1.strip(),
-            address_line2=blank_to_none(address_line2),
-            city=city.strip(),
-            region=blank_to_none(region),
-            postal_code=postal_code.strip(),
-            country=country.strip(),
-            verified_at=None,
-            unsubscribed_at=None,
-        )
+        recipient = Recipient(email=address, verified_at=None, unsubscribed_at=None)
+        apply_address(recipient, form)
         db.add(recipient)
         db.flush()
         record_version(db, recipient, utcnow())
-    send_login_code(db, mailer, address)
+    elif existing.verified_at is None:
+        apply_address(existing, form)
+        db.add(existing)
+        record_version(db, existing, utcnow())
+    send_login_code(db, mailer, address, background)
     return RedirectResponse(f"/verify?email={address}", status_code=303)
 
 
 @router.get("/login")
 def login_form(request: Request, templates: Templates):
     return templates.TemplateResponse(
-        request, "login.html", {"csrf": csrf_token(request)}
+        request, "login.html", {"csrf": csrf_token(request), "error": None}
     )
 
 
@@ -117,15 +184,27 @@ def login_form(request: Request, templates: Templates):
 def login(
     request: Request,
     db: Db,
+    templates: Templates,
     mailer: Mail,
-    csrf: Annotated[str, Form()],
-    email: Annotated[str, Form()],
+    background: BackgroundTasks,
+    form: Annotated[LoginForm, Form()],
 ):
-    require_csrf(request, csrf)
-    address = normalize_email(email)
+    if volume_capped(db, utcnow()):
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {
+                "csrf": csrf_token(request),
+                "error": (
+                    "Sign-in codes are temporarily unavailable. Try again in an hour."
+                ),
+            },
+            status_code=429,
+        )
+    address = form.email
     existing = db.scalar(select(Recipient).where(Recipient.email == address))
     if existing is not None:
-        send_login_code(db, mailer, address)
+        send_login_code(db, mailer, address, background)
     return RedirectResponse(f"/verify?email={address}", status_code=303)
 
 
@@ -143,13 +222,10 @@ def verify(
     request: Request,
     db: Db,
     templates: Templates,
-    csrf: Annotated[str, Form()],
-    email: Annotated[str, Form()],
-    code: Annotated[str, Form()],
+    form: Annotated[VerifyForm, Form()],
 ):
-    require_csrf(request, csrf)
-    address = normalize_email(email)
-    if not consume_login_code(db, address, code.strip(), utcnow()):
+    address = form.email
+    if not consume_login_code(db, address, form.code, utcnow()):
         return templates.TemplateResponse(
             request,
             "verify.html",
@@ -165,7 +241,10 @@ def verify(
         raise LoginRequired()
     if recipient.verified_at is None:
         recipient.verified_at = utcnow()
+    if recipient.session_token is None:
+        recipient.session_token = secrets.token_urlsafe(32)
     request.session["recipient_id"] = recipient.id
+    request.session["recipient_token"] = recipient.session_token
     return RedirectResponse("/account", status_code=303)
 
 
@@ -187,44 +266,26 @@ def update_account(
     request: Request,
     db: Db,
     recipient: CurrentRecipient,
-    csrf: Annotated[str, Form()],
-    name: Annotated[str, Form()],
-    address_line1: Annotated[str, Form()],
-    city: Annotated[str, Form()],
-    postal_code: Annotated[str, Form()],
-    country: Annotated[str, Form()],
-    address_line2: Annotated[str, Form()] = "",
-    region: Annotated[str, Form()] = "",
+    form: Annotated[AddressForm, Form()],
 ):
-    require_csrf(request, csrf)
-    recipient.name = name.strip()
-    recipient.address_line1 = address_line1.strip()
-    recipient.address_line2 = blank_to_none(address_line2)
-    recipient.city = city.strip()
-    recipient.region = blank_to_none(region)
-    recipient.postal_code = postal_code.strip()
-    recipient.country = country.strip()
+    apply_address(recipient, form)
     db.add(recipient)
     record_version(db, recipient, utcnow())
     return RedirectResponse("/account?saved=1", status_code=303)
 
 
 @router.post("/account/unregister")
-def unregister(
-    request: Request, db: Db, recipient: CurrentRecipient, csrf: Annotated[str, Form()]
-):
-    require_csrf(request, csrf)
+def unregister(request: Request, db: Db, recipient: CurrentRecipient):
     recipient.unsubscribed_at = utcnow()
+    recipient.session_token = None
     db.add(recipient)
     request.session.pop("recipient_id", None)
+    request.session.pop("recipient_token", None)
     return RedirectResponse("/goodbye", status_code=303)
 
 
 @router.post("/account/reregister")
-def reregister(
-    request: Request, db: Db, recipient: CurrentRecipient, csrf: Annotated[str, Form()]
-):
-    require_csrf(request, csrf)
+def reregister(request: Request, db: Db, recipient: CurrentRecipient):
     recipient.unsubscribed_at = None
     db.add(recipient)
     return RedirectResponse("/account", status_code=303)
@@ -246,7 +307,9 @@ def goodbye(request: Request, templates: Templates):
 
 
 @router.post("/logout")
-def logout(request: Request, csrf: Annotated[str, Form()]):
-    require_csrf(request, csrf)
+def logout(request: Request, db: Db, recipient: CurrentRecipient):
+    recipient.session_token = None
+    db.add(recipient)
     request.session.pop("recipient_id", None)
+    request.session.pop("recipient_token", None)
     return RedirectResponse("/", status_code=303)
