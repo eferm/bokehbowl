@@ -19,15 +19,7 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 DEFAULT_FAVICON = Path(__file__).parent / "static" / "favicon.svg"
 INSTANCE_DIR = Path("instance")
 INSTANCE_TEMPLATES_DIR = INSTANCE_DIR / "templates"
-
-
-def favicon_path() -> Path:
-    """A favicon dropped into instance/ shadows the default, like templates do."""
-    for name in ("favicon.ico", "favicon.png", "favicon.svg"):
-        path = INSTANCE_DIR / name
-        if path.is_file():
-            return path
-    return DEFAULT_FAVICON
+INSTANCE_FAVICON = INSTANCE_DIR / "favicon.svg"
 
 
 def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
@@ -43,7 +35,7 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
     )
     app.state.templates = templates
 
-    favicon = favicon_path()
+    favicon = INSTANCE_FAVICON if INSTANCE_FAVICON.is_file() else DEFAULT_FAVICON
 
     @app.get("/favicon.ico")
     def favicon_file() -> FileResponse:

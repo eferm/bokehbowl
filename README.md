@@ -1,15 +1,16 @@
 # bokehbowl
 
-A tiny web app for mailing postcards to people who ask for one. People sign up with
+A tiny web app for mailing pictures to people who ask for one. People sign up with
 their name, email, and postal address; you (the admin) see a queue of who to send to,
 mark them sent, and export addresses for printing. Free of charge, just for fun.
-The frontend says "postcard", but the capability is generic — an instance can just as
-well send photos in envelopes, or letters.
+The frontend says "picture", but the capability is generic — an instance can just as
+well send postcards, photos in envelopes, or letters.
 
 **Stack:** Python 3.12 · FastAPI · SQLAlchemy 2.0 · SQLite · Alembic · Jinja2 · uv · ruff
 
 **Auth:** passwordless — a 6-digit code emailed on sign-up/sign-in (which doubles as
-email verification). No passwords stored, no third-party identity provider.
+email verification). No passwords stored, no third-party identity provider. Code
+emails are rate limited.
 
 ## Run it locally
 
@@ -41,6 +42,12 @@ Cloudflare, use a Cloudflare Tunnel or **Full (strict)** TLS with an origin
 certificate — Flexible mode encrypts only the visitor-to-Cloudflare half and carries
 traffic to your origin as plaintext HTTP across the public internet.
 
+For an instance on the open internet, one Cloudflare rate-limiting rule (Security →
+WAF, included in the free plan) matching `POST` to `/signup`, `/login`, and
+`/admin/login` throttles per-IP bursts: password guessing on the admin login and
+code-email floods on the public forms. The app's own hourly and daily caps on code
+emails bound the total volume behind it.
+
 **Railway / Render** — create a project from this repo (both auto-detect the
 Dockerfile), attach a volume at `/app/data`, set the env vars, deploy. Pushes to the
 repo auto-deploy from then on.
@@ -66,8 +73,8 @@ beta, so this path is best-effort — the container path above is the supported 
 Each instance names its operator: set `OPERATOR_NAME` and `OPERATOR_CONTACT` and they
 appear in the footer, the `/about` page, and the `/privacy` page. For a fully custom
 front or about page, drop templates into `instance/templates/` — they shadow the
-defaults (see the README in that directory). A `favicon.ico` (or `.png`/`.svg`)
-dropped into `instance/` replaces the default mailbox icon. Forks commit their
+defaults (see the README in that directory). A `favicon.svg` dropped into `instance/`
+replaces the default mailbox icon. Forks commit their
 `instance/` folder; docker-compose users can just edit it in place (it's mounted into
 the container).
 

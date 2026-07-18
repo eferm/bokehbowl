@@ -1,6 +1,7 @@
 """Database models. SQLite dialect only, so the schema stays portable to D1."""
 
 from datetime import UTC, datetime
+from uuid6 import uuid7
 
 from sqlalchemy import ForeignKey, String, UniqueConstraint, select
 from sqlalchemy.orm import (
@@ -10,9 +11,6 @@ from sqlalchemy.orm import (
     mapped_column,
     relationship,
 )
-
-# uuid.uuid7 is stdlib from Python 3.14; the uuid6 package provides it for 3.12.
-from uuid6 import uuid7
 
 
 def utcnow() -> datetime:
@@ -78,7 +76,7 @@ class RecipientVersion(Base):
 class Mailing(Base):
     """One specific thing mailed to many recipients — a postcard design or print
     run, a photo, a letter. Each physical copy sent is a Mailpiece. The frontend
-    calls it a postcard; the capability is generic."""
+    calls it a picture; the capability is generic."""
 
     __tablename__ = "mailings"
 
