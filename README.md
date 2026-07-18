@@ -2,7 +2,9 @@
 
 A tiny web app for mailing postcards to people who ask for one. People sign up with
 their name, email, and postal address; you (the admin) see a queue of who to send to,
-mark postcards sent, and export addresses for printing. Free of charge, just for fun.
+mark them sent, and export addresses for printing. Free of charge, just for fun.
+The frontend says "postcard", but the capability is generic — an instance can just as
+well send photos in envelopes, or letters.
 
 **Stack:** Python 3.12 · FastAPI · SQLAlchemy 2.0 · SQLite · Alembic · Jinja2 · uv · ruff
 
@@ -31,8 +33,13 @@ at Cloudflare Email Service's SMTP endpoint, but any SMTPS provider works.
 ## Deploy
 
 The Dockerfile is the deploy story. It runs database migrations on boot, then serves
-on port 8000.
-Whatever host you pick, put your DNS (e.g. Cloudflare) in front for HTTPS.
+on port 8000. Uvicorn is started with `--proxy-headers`, so behind a platform edge or
+reverse proxy the app sees the real scheme and client IP from `X-Forwarded-*`.
+
+Whatever host you pick, terminate HTTPS in front of the app. If that front is
+Cloudflare, use a Cloudflare Tunnel or **Full (strict)** TLS with an origin
+certificate — Flexible mode encrypts only the visitor-to-Cloudflare half and carries
+traffic to your origin as plaintext HTTP across the public internet.
 
 **Railway / Render** — create a project from this repo (both auto-detect the
 Dockerfile), attach a volume at `/app/data`, set the env vars, deploy. Pushes to the
@@ -42,8 +49,11 @@ repo auto-deploy from then on.
 SESSION_SECRET=... ADMIN_PASSWORD=...`, then `fly deploy`.
 
 **Self-host (any VPS)** — `cp .env.example .env`, edit it, then `docker compose up -d`.
-The SQLite database lands in `./data/`; back it up by copying that directory (or point
-[Litestream](https://litestream.io/) at it for continuous replication).
+The compose file binds to `127.0.0.1`, so the app is reachable only through whatever
+you put in front of it on the same machine (a reverse proxy or a Cloudflare Tunnel) —
+never directly from the network. The SQLite database lands in `./data/`; back it up by
+copying that directory (or point [Litestream](https://litestream.io/) at it for
+continuous replication).
 
 **Cloudflare Workers + D1 (experimental)** — the app is written to be compatible with
 Cloudflare's Python Workers runtime: pure-Python dependencies, sync SQLAlchemy,
@@ -56,8 +66,10 @@ beta, so this path is best-effort — the container path above is the supported 
 Each instance names its operator: set `OPERATOR_NAME` and `OPERATOR_CONTACT` and they
 appear in the footer, the `/about` page, and the `/privacy` page. For a fully custom
 front or about page, drop templates into `instance/templates/` — they shadow the
-defaults (see the README in that directory). Forks commit their `instance/` folder;
-docker-compose users can just edit it in place (it's mounted into the container).
+defaults (see the README in that directory). A `favicon.ico` (or `.png`/`.svg`)
+dropped into `instance/` replaces the default mailbox icon. Forks commit their
+`instance/` folder; docker-compose users can just edit it in place (it's mounted into
+the container).
 
 The default `/privacy` page honestly describes what this app does (and doesn't do)
 with data, naming your `OPERATOR_*` values as the responsible party — review it once
@@ -94,7 +106,7 @@ that's how your personal about page becomes everyone's default.
 ## Admin & data model
 
 `/admin` shows the raw database tables, one view per table (columns come straight from
-the schema), each exportable as CSV:
+the schema), each exportable as CSV. Primary keys are UUIDv7 strings:
 
 - **recipients** — one row per person, current state. *Unregister* here is a soft
   delete (timestamp); people can also unregister/rejoin themselves from their account
@@ -102,21 +114,22 @@ the schema), each exportable as CSV:
 - **recipient_versions** — append-only history: one row per state a recipient has ever
   been in (written on signup and on every real change; a no-op save appends nothing).
   A version is valid from its `valid_from` until the next version's.
-- **postcards** — one row per postcard design or print run ("sailboat photo") that
-  gets sent to many people.
-- **sendings** — one row per physical card mailed: which postcard, to which
-  recipient, at which exact address version. A person can receive each postcard once
-  (unique constraint).
+- **mailings** — one row per specific thing sent to many people ("sailboat
+  postcard"): a postcard design or print run, a photo, a letter — the schema
+  doesn't care what's inside the envelope.
+- **mailpieces** — one row per physical piece mailed (USPS's word): which mailing,
+  to which recipient, at which exact address version. A person can receive each
+  mailing once (unique constraint).
 
 ### Sending a batch
 
-Create a postcard on the postcards view, then open it: the detail page shows **To
+Create a mailing on the mailings view, then open it: the detail page shows **To
 send** — everyone eligible (verified, not unregistered) who hasn't received this
-postcard — with addresses to copy and a CSV export for labels. *Mark sent* records
-one sending pinned to the person's current address version; *Undo* fixes a
-mis-click. People who unregister drop out of To send automatically. People who signed
-up *after* the postcard was created aren't suggested by default — they sit in a
-collapsed "Signed up after this postcard" section, sendable by explicit choice.
+mailing — with addresses to copy and a CSV export for labels. *Mark sent* records one
+mailpiece pinned to the person's current address version; *Undo* fixes a mis-click.
+People who unregister drop out of To send automatically. People who signed up *after*
+the mailing was created sit in a collapsed "Signed up after this mailing" section,
+sendable by explicit choice.
 
 ## Development
 

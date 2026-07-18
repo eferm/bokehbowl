@@ -44,6 +44,7 @@ def client(mailer):
             mail=ConsoleMail(),
             operator_name="Testy Operator",
             operator_contact="operator@example.com",
+            commit="abc1234def5678",
         ),
         engine=engine,
         mailer=mailer,

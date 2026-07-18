@@ -34,6 +34,7 @@ def build_app(env):
         ),
         operator_name=env.OPERATOR_NAME,
         operator_contact=env.OPERATOR_CONTACT,
+        commit=getattr(env, "GIT_COMMIT", None),
     )
     engine = create_engine(config.database_url, connect_args={"binding": env.DB})
     return create_app(config=config, engine=engine, mailer=build_mailer(config.mail))

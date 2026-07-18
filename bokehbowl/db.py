@@ -11,10 +11,18 @@ from sqlalchemy.orm import (
     relationship,
 )
 
+# uuid.uuid7 is stdlib from Python 3.14; the uuid6 package provides it for 3.12.
+from uuid6 import uuid7
+
 
 def utcnow() -> datetime:
     """Naive UTC timestamp — SQLite has no timezone type, so we store naive UTC."""
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def new_id() -> str:
+    """UUIDv7 primary key: millisecond timestamp prefix, random tail."""
+    return str(uuid7())
 
 
 class Base(DeclarativeBase):
@@ -27,7 +35,7 @@ class Recipient(Base):
 
     __tablename__ = "recipients"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(200))
     address_line1: Mapped[str] = mapped_column(String(200))
@@ -43,7 +51,7 @@ class Recipient(Base):
     versions: Mapped[list["RecipientVersion"]] = relationship(
         back_populates="recipient"
     )
-    sendings: Mapped[list["Sending"]] = relationship(back_populates="recipient")
+    mailpieces: Mapped[list["Mailpiece"]] = relationship(back_populates="recipient")
 
 
 class RecipientVersion(Base):
@@ -52,8 +60,8 @@ class RecipientVersion(Base):
 
     __tablename__ = "recipient_versions"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    recipient_id: Mapped[int] = mapped_column(ForeignKey("recipients.id"), index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    recipient_id: Mapped[str] = mapped_column(ForeignKey("recipients.id"), index=True)
     email: Mapped[str] = mapped_column(String(320))
     name: Mapped[str] = mapped_column(String(200))
     address_line1: Mapped[str] = mapped_column(String(200))
@@ -67,42 +75,44 @@ class RecipientVersion(Base):
     recipient: Mapped[Recipient] = relationship(back_populates="versions")
 
 
-class Postcard(Base):
-    """A postcard design or print run — one photo intended for many recipients."""
+class Mailing(Base):
+    """One specific thing mailed to many recipients — a postcard design or print
+    run, a photo, a letter. Each physical copy sent is a Mailpiece. The frontend
+    calls it a postcard; the capability is generic."""
 
-    __tablename__ = "postcards"
+    __tablename__ = "mailings"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
-    sendings: Mapped[list["Sending"]] = relationship(back_populates="postcard")
+    mailpieces: Mapped[list["Mailpiece"]] = relationship(back_populates="mailing")
 
 
-class Sending(Base):
-    """One physical card mailed: a postcard sent to one recipient, at the exact
-    address version printed on the card."""
+class Mailpiece(Base):
+    """One physical piece of mail (USPS's word): a mailing sent to one recipient,
+    at the exact address version written on it."""
 
-    __tablename__ = "sendings"
-    __table_args__ = (UniqueConstraint("postcard_id", "recipient_id"),)
+    __tablename__ = "mailpieces"
+    __table_args__ = (UniqueConstraint("mailing_id", "recipient_id"),)
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    postcard_id: Mapped[int] = mapped_column(ForeignKey("postcards.id"), index=True)
-    recipient_id: Mapped[int] = mapped_column(ForeignKey("recipients.id"), index=True)
-    recipient_version_id: Mapped[int] = mapped_column(
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    mailing_id: Mapped[str] = mapped_column(ForeignKey("mailings.id"), index=True)
+    recipient_id: Mapped[str] = mapped_column(ForeignKey("recipients.id"), index=True)
+    recipient_version_id: Mapped[str] = mapped_column(
         ForeignKey("recipient_versions.id")
     )
     sent_at: Mapped[datetime] = mapped_column(default=utcnow)
 
-    postcard: Mapped[Postcard] = relationship(back_populates="sendings")
-    recipient: Mapped[Recipient] = relationship(back_populates="sendings")
+    mailing: Mapped[Mailing] = relationship(back_populates="mailpieces")
+    recipient: Mapped[Recipient] = relationship(back_populates="mailpieces")
     recipient_version: Mapped[RecipientVersion] = relationship()
 
 
 class LoginCode(Base):
     __tablename__ = "login_codes"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     email: Mapped[str] = mapped_column(String(320), index=True)
     code_hash: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
@@ -123,11 +133,11 @@ SNAPSHOT_FIELDS = (
 )
 
 
-def latest_version(db: Session, recipient_id: int) -> RecipientVersion | None:
+def latest_version(db: Session, recipient_id: str) -> RecipientVersion | None:
     return db.scalar(
         select(RecipientVersion)
         .where(RecipientVersion.recipient_id == recipient_id)
-        .order_by(RecipientVersion.id.desc())
+        .order_by(RecipientVersion.valid_from.desc())
         .limit(1)
     )
 

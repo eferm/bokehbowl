@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📮</text></svg>">
+  <link rel="icon" href="/favicon.ico">
   <title>{% block title %}bokehbowl{% endblock %}</title>
 </head>
 <body>
@@ -17,7 +17,7 @@
   <footer>
     <p><small>A free postcard, mailed to you. Run by {{ operator_name }}.
     <a href="/about">About</a> · <a href="/privacy">Privacy</a> ·
-    Powered by <a href="https://github.com/eferm/bokehbowl">bokehbowl</a></small></p>
+    Powered by <a href="https://github.com/eferm/bokehbowl">bokehbowl</a>{% if app_commit %} <code>{{ app_commit[:7] }}</code>{% endif %}</small></p>
   </footer>
 </body>
 </html>

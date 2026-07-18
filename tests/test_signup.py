@@ -1,3 +1,6 @@
+import base64
+import json
+
 from tests.conftest import SIGNUP_FORM, csrf_from, sign_up_and_verify
 
 
@@ -7,6 +10,16 @@ def test_signup_sends_code_and_verify_logs_in(client, mailer):
     assert account.status_code == 200
     assert "ada@example.com" in account.text
     assert "Ada Lovelace" in account.text
+
+
+def test_session_cookie_carries_uuid(client, mailer):
+    """The session cookie payload is client-readable base64; the recipient id
+    inside is a UUID string."""
+    sign_up_and_verify(client, mailer)
+    encoded = client.cookies["session"].split(".")[0]
+    payload = json.loads(base64.b64decode(encoded + "=" * (-len(encoded) % 4)))
+    assert isinstance(payload["recipient_id"], str)
+    assert len(payload["recipient_id"]) == 36
 
 
 def test_email_is_normalized_and_not_duplicated(client, mailer):

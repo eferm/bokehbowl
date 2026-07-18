@@ -8,15 +8,15 @@ from typing import Annotated
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from bokehbowl.auth import csrf_token, require_csrf
 from bokehbowl.db import (
     Base,
-    Postcard,
+    Mailing,
+    Mailpiece,
     Recipient,
     RecipientVersion,
-    Sending,
     latest_version,
     utcnow,
 )
@@ -29,11 +29,11 @@ class AdminRequired(Exception):
 
 router = APIRouter(prefix="/admin")
 
-TABLES: dict[str, type[Base]] = {
-    "recipients": Recipient,
-    "recipient_versions": RecipientVersion,
-    "postcards": Postcard,
-    "sendings": Sending,
+TABLES: dict[str, tuple[type[Base], InstrumentedAttribute]] = {
+    "recipients": (Recipient, Recipient.created_at),
+    "recipient_versions": (RecipientVersion, RecipientVersion.valid_from),
+    "mailings": (Mailing, Mailing.created_at),
+    "mailpieces": (Mailpiece, Mailpiece.sent_at),
 }
 
 
@@ -42,7 +42,7 @@ def require_admin(request: Request) -> None:
         raise AdminRequired()
 
 
-def require_table(name: str) -> type[Base]:
+def require_table(name: str) -> tuple[type[Base], InstrumentedAttribute]:
     if name not in TABLES:
         raise HTTPException(status_code=404)
     return TABLES[name]
@@ -52,9 +52,11 @@ def columns_of(model: type[Base]) -> list[str]:
     return [column.key for column in model.__table__.columns]
 
 
-def rows_of(db: Session, model: type[Base]) -> list[list[object]]:
+def rows_of(
+    db: Session, model: type[Base], timestamp: InstrumentedAttribute
+) -> list[list[object]]:
     columns = columns_of(model)
-    objects = db.scalars(select(model).order_by(model.id.desc()))
+    objects = db.scalars(select(model).order_by(timestamp.desc()))
     return [[getattr(obj, column) for column in columns] for obj in objects]
 
 
@@ -97,10 +99,10 @@ def dashboard(
     request: Request, db: Db, templates: Templates, table: str = "recipients"
 ):
     require_admin(request)
-    model = require_table(table)
+    model, timestamp = require_table(table)
     counts = {
         name: db.scalar(select(func.count()).select_from(m))
-        for name, m in TABLES.items()
+        for name, (m, _) in TABLES.items()
     }
     return templates.TemplateResponse(
         request,
@@ -109,7 +111,7 @@ def dashboard(
             "csrf": csrf_token(request),
             "table": table,
             "columns": columns_of(model),
-            "rows": rows_of(db, model),
+            "rows": rows_of(db, model, timestamp),
             "counts": counts,
         },
     )
@@ -117,7 +119,7 @@ def dashboard(
 
 @router.post("/recipients/{recipient_id}/unregister")
 def unregister(
-    request: Request, db: Db, recipient_id: int, csrf: Annotated[str, Form()]
+    request: Request, db: Db, recipient_id: str, csrf: Annotated[str, Form()]
 ):
     require_admin(request)
     require_csrf(request, csrf)
@@ -132,7 +134,7 @@ def unregister(
 
 @router.post("/recipients/{recipient_id}/reregister")
 def reregister(
-    request: Request, db: Db, recipient_id: int, csrf: Annotated[str, Form()]
+    request: Request, db: Db, recipient_id: str, csrf: Annotated[str, Form()]
 ):
     require_admin(request)
     require_csrf(request, csrf)
@@ -147,11 +149,11 @@ def reregister(
 @router.get("/export.csv")
 def export(request: Request, db: Db, table: str = "recipients"):
     require_admin(request)
-    model = require_table(table)
+    model, timestamp = require_table(table)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(columns_of(model))
-    writer.writerows(rows_of(db, model))
+    writer.writerows(rows_of(db, model, timestamp))
     return Response(
         content=buffer.getvalue(),
         media_type="text/csv",
@@ -160,7 +162,7 @@ def export(request: Request, db: Db, table: str = "recipients"):
 
 
 def eligible_recipients(db: Session) -> list[Recipient]:
-    """Everyone a postcard may be sent to: verified and not unregistered."""
+    """Everyone a mailing may be sent to: verified and not unregistered."""
     return list(
         db.scalars(
             select(Recipient)
@@ -173,49 +175,49 @@ def eligible_recipients(db: Session) -> list[Recipient]:
     )
 
 
-def require_postcard(db: Session, postcard_id: int) -> Postcard:
-    postcard = db.get(Postcard, postcard_id)
-    if postcard is None:
+def require_mailing(db: Session, mailing_id: str) -> Mailing:
+    mailing = db.get(Mailing, mailing_id)
+    if mailing is None:
         raise HTTPException(status_code=404)
-    return postcard
+    return mailing
 
 
-def postcard_sendings(db: Session, postcard_id: int) -> list[Sending]:
+def mailpieces_of(db: Session, mailing_id: str) -> list[Mailpiece]:
     return list(
         db.scalars(
-            select(Sending)
-            .where(Sending.postcard_id == postcard_id)
-            .order_by(Sending.sent_at.desc())
+            select(Mailpiece)
+            .where(Mailpiece.mailing_id == mailing_id)
+            .order_by(Mailpiece.sent_at.desc())
         )
     )
 
 
-def unsent_recipients(db: Session, postcard_id: int) -> list[Recipient]:
-    sent_ids = {sending.recipient_id for sending in postcard_sendings(db, postcard_id)}
+def unsent_recipients(db: Session, mailing_id: str) -> list[Recipient]:
+    sent_ids = {mailpiece.recipient_id for mailpiece in mailpieces_of(db, mailing_id)}
     return [r for r in eligible_recipients(db) if r.id not in sent_ids]
 
 
-def pending_recipients(db: Session, postcard: Postcard) -> list[Recipient]:
-    """The default mailing list: unsent recipients who existed when the postcard did."""
+def pending_recipients(db: Session, mailing: Mailing) -> list[Recipient]:
+    """The default mailing list: unsent recipients who existed when the mailing did."""
     return [
         r
-        for r in unsent_recipients(db, postcard.id)
-        if r.created_at <= postcard.created_at
+        for r in unsent_recipients(db, mailing.id)
+        if r.created_at <= mailing.created_at
     ]
 
 
-def late_recipients(db: Session, postcard: Postcard) -> list[Recipient]:
-    """Unsent recipients who signed up after the postcard was created — sendable
+def late_recipients(db: Session, mailing: Mailing) -> list[Recipient]:
+    """Unsent recipients who signed up after the mailing was created — sendable
     only by explicit choice."""
     return [
         r
-        for r in unsent_recipients(db, postcard.id)
-        if r.created_at > postcard.created_at
+        for r in unsent_recipients(db, mailing.id)
+        if r.created_at > mailing.created_at
     ]
 
 
-@router.post("/postcards")
-def create_postcard(
+@router.post("/mailings")
+def create_mailing(
     request: Request,
     db: Db,
     csrf: Annotated[str, Form()],
@@ -223,78 +225,78 @@ def create_postcard(
 ):
     require_admin(request)
     require_csrf(request, csrf)
-    postcard = Postcard(title=title.strip())
-    db.add(postcard)
+    mailing = Mailing(title=title.strip())
+    db.add(mailing)
     db.flush()
-    return RedirectResponse(f"/admin/postcards/{postcard.id}", status_code=303)
+    return RedirectResponse(f"/admin/mailings/{mailing.id}", status_code=303)
 
 
-@router.get("/postcards/{postcard_id}")
-def postcard_detail(request: Request, db: Db, templates: Templates, postcard_id: int):
+@router.get("/mailings/{mailing_id}")
+def mailing_detail(request: Request, db: Db, templates: Templates, mailing_id: str):
     require_admin(request)
-    postcard = require_postcard(db, postcard_id)
+    mailing = require_mailing(db, mailing_id)
     return templates.TemplateResponse(
         request,
-        "postcard.html",
+        "mailing.html",
         {
             "csrf": csrf_token(request),
-            "postcard": postcard,
-            "pending": pending_recipients(db, postcard),
-            "late": late_recipients(db, postcard),
-            "sendings": postcard_sendings(db, postcard_id),
+            "mailing": mailing,
+            "pending": pending_recipients(db, mailing),
+            "late": late_recipients(db, mailing),
+            "mailpieces": mailpieces_of(db, mailing_id),
         },
     )
 
 
-@router.post("/postcards/{postcard_id}/send/{recipient_id}")
+@router.post("/mailings/{mailing_id}/send/{recipient_id}")
 def mark_sent(
     request: Request,
     db: Db,
-    postcard_id: int,
-    recipient_id: int,
+    mailing_id: str,
+    recipient_id: str,
     csrf: Annotated[str, Form()],
 ):
     require_admin(request)
     require_csrf(request, csrf)
-    postcard = require_postcard(db, postcard_id)
+    mailing = require_mailing(db, mailing_id)
     version = latest_version(db, recipient_id)
     if version is None:
         raise HTTPException(status_code=404)
     already_sent = db.scalar(
-        select(Sending).where(
-            Sending.postcard_id == postcard.id, Sending.recipient_id == recipient_id
+        select(Mailpiece).where(
+            Mailpiece.mailing_id == mailing.id, Mailpiece.recipient_id == recipient_id
         )
     )
     if already_sent is None:
         db.add(
-            Sending(
-                postcard_id=postcard.id,
+            Mailpiece(
+                mailing_id=mailing.id,
                 recipient_id=recipient_id,
                 recipient_version_id=version.id,
                 sent_at=utcnow(),
             )
         )
-    return RedirectResponse(f"/admin/postcards/{postcard.id}", status_code=303)
+    return RedirectResponse(f"/admin/mailings/{mailing.id}", status_code=303)
 
 
-@router.post("/sendings/{sending_id}/delete")
-def undo_sending(
-    request: Request, db: Db, sending_id: int, csrf: Annotated[str, Form()]
+@router.post("/mailpieces/{mailpiece_id}/delete")
+def undo_mailpiece(
+    request: Request, db: Db, mailpiece_id: str, csrf: Annotated[str, Form()]
 ):
     require_admin(request)
     require_csrf(request, csrf)
-    sending = db.get(Sending, sending_id)
-    if sending is None:
+    mailpiece = db.get(Mailpiece, mailpiece_id)
+    if mailpiece is None:
         raise HTTPException(status_code=404)
-    postcard_id = sending.postcard_id
-    db.delete(sending)
-    return RedirectResponse(f"/admin/postcards/{postcard_id}", status_code=303)
+    mailing_id = mailpiece.mailing_id
+    db.delete(mailpiece)
+    return RedirectResponse(f"/admin/mailings/{mailing_id}", status_code=303)
 
 
-@router.get("/postcards/{postcard_id}/labels.csv")
-def export_labels(request: Request, db: Db, postcard_id: int):
+@router.get("/mailings/{mailing_id}/labels.csv")
+def export_labels(request: Request, db: Db, mailing_id: str):
     require_admin(request)
-    postcard = require_postcard(db, postcard_id)
+    mailing = require_mailing(db, mailing_id)
     columns = [
         "name",
         "address_line1",
@@ -307,14 +309,14 @@ def export_labels(request: Request, db: Db, postcard_id: int):
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(columns)
-    for recipient in pending_recipients(db, postcard):
+    for recipient in pending_recipients(db, mailing):
         writer.writerow([getattr(recipient, column) for column in columns])
     return Response(
         content=buffer.getvalue(),
         media_type="text/csv",
         headers={
             "Content-Disposition": (
-                f"attachment; filename=postcard-{postcard_id}-to-send.csv"
+                f"attachment; filename=mailing-{mailing_id}-to-send.csv"
             )
         },
     )
