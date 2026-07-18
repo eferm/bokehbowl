@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ mailing.title }} — bokehbowl admin{% endblock %}
+{% block title %}{{ mailing.title }} — Bokehbowl admin{% endblock %}
 {% block body_class %}admin{% endblock %}
 {% block content %}
 <p><a href="/admin?table=mailings">&larr; all mailings</a></p>
@@ -8,6 +8,7 @@
 
 <h3>To send ({{ pending | length }})</h3>
 <p><a href="/admin/mailings/{{ mailing.id }}/labels.csv">Export this list as CSV</a></p>
+<div class="table-scroll">
 <table border="1" cellpadding="6">
   <thead>
     <tr><th>Name</th><th>Address</th><th>Email</th><th></th></tr>
@@ -34,11 +35,13 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 
 {% if late %}
 <details>
   <summary>Signed up after this mailing ({{ late | length }}) — send by choice</summary>
-  <table border="1" cellpadding="6">
+  <div class="table-scroll">
+<table border="1" cellpadding="6">
     <thead>
       <tr><th>Name</th><th>Address</th><th>Signed up</th><th></th></tr>
     </thead>
@@ -62,10 +65,12 @@
       {% endfor %}
     </tbody>
   </table>
+</div>
 </details>
 {% endif %}
 
 <h3>Sent ({{ mailpieces | length }})</h3>
+<div class="table-scroll">
 <table border="1" cellpadding="6">
   <thead>
     <tr><th>Name</th><th>Sent</th><th>Address on envelope</th><th></th></tr>
@@ -92,4 +97,5 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% endblock %}

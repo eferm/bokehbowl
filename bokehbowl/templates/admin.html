@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Admin — bokehbowl{% endblock %}
+{% block title %}Admin — Bokehbowl{% endblock %}
 {% block body_class %}admin{% endblock %}
 {% block content %}
 <h2>Admin</h2>
@@ -17,6 +17,7 @@
 </form>
 {% endif %}
 {% set has_actions = table in ("recipients", "mailings") %}
+<div class="table-scroll">
 <table border="1" cellpadding="6">
   <thead>
     <tr>
@@ -51,6 +52,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 <hr>
 <form method="post" action="/admin/logout">
   <input type="hidden" name="csrf" value="{{ csrf }}">
