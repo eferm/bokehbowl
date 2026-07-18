@@ -61,6 +61,7 @@ def upgrade() -> None:
     op.create_table('recipient_sessions',
     sa.Column('token', sa.String(length=43), nullable=False),
     sa.Column('recipient_id', sa.String(length=36), nullable=False),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.ForeignKeyConstraint(['recipient_id'], ['recipients.id'], ),
     sa.PrimaryKeyConstraint('token')
     )

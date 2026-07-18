@@ -1,12 +1,13 @@
 import base64
 import json
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from bokehbowl import auth
-from bokehbowl.db import LoginCode, Recipient, RecipientSession
+from bokehbowl import auth, web
+from bokehbowl.db import LoginCode, Recipient, RecipientSession, utcnow
 from tests.conftest import SIGNUP_FORM, csrf_from, sign_up_and_verify
 
 
@@ -148,6 +149,26 @@ def test_logout_only_ends_current_device_session(client, mailer):
     with Session(client.app.state.engine) as db:
         sessions = db.scalars(select(RecipientSession)).all()
         assert [session.token for session in sessions] == ["another-device-session"]
+
+
+def test_verification_prunes_expired_recipient_sessions(client, mailer):
+    sign_up_and_verify(client, mailer)
+    with Session(client.app.state.engine) as db:
+        session = db.scalars(select(RecipientSession)).one()
+        session.created_at = utcnow() - web.RECIPIENT_SESSION_TTL - timedelta(
+            seconds=1
+        )
+        db.commit()
+
+    csrf = csrf_from(client.get("/").text)
+    client.post("/login", data={"csrf": csrf, "email": "ada@example.com"})
+    client.post(
+        "/verify",
+        data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
+    )
+
+    with Session(client.app.state.engine) as db:
+        assert len(db.scalars(select(RecipientSession)).all()) == 1
 
 
 def test_signup_state_survives_mailer_failure(client, mailer, monkeypatch):

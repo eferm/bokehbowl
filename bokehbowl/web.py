@@ -2,6 +2,7 @@
 
 import secrets
 from collections.abc import Iterator
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
@@ -26,6 +27,8 @@ from bokehbowl.auth import (
 )
 from bokehbowl.db import Recipient, RecipientSession, record_version, utcnow
 from bokehbowl.mailer import Mailer
+
+RECIPIENT_SESSION_TTL = timedelta(days=30)
 
 
 class LoginRequired(Exception):
@@ -57,6 +60,8 @@ def require_recipient(request: Request, db: Db) -> Recipient:
         raise LoginRequired()
     session = db.get(RecipientSession, recipient_token)
     if session is None:
+        raise LoginRequired()
+    if session.created_at < utcnow() - RECIPIENT_SESSION_TTL:
         raise LoginRequired()
     return session.recipient
 
@@ -214,7 +219,8 @@ def verify(
     form: Annotated[VerifyForm, Form()],
 ):
     address = form.email
-    if not consume_login_code(db, address, form.code, utcnow()):
+    now = utcnow()
+    if not consume_login_code(db, address, form.code, now):
         return templates.TemplateResponse(
             request,
             "verify.html",
@@ -229,7 +235,12 @@ def verify(
         raise LoginRequired()
     newly_verified = recipient.verified_at is None
     if newly_verified:
-        recipient.verified_at = utcnow()
+        recipient.verified_at = now
+    db.execute(
+        delete(RecipientSession).where(
+            RecipientSession.created_at < now - RECIPIENT_SESSION_TTL
+        )
+    )
     session = RecipientSession(
         recipient_id=recipient.id,
         token=secrets.token_urlsafe(32),

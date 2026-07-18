@@ -61,6 +61,7 @@ class RecipientSession(Base):
 
     token: Mapped[str] = mapped_column(String(43), primary_key=True)
     recipient_id: Mapped[str] = mapped_column(ForeignKey("recipients.id"))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     recipient: Mapped[Recipient] = relationship(back_populates="sessions")
 

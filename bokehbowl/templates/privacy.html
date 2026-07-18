@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Privacy — bokehbowl{% endblock %}
 {% block content %}
+<article class="prose">
 <h2>Privacy</h2>
 <p>This instance is operated by <strong>{{ operator_name }}</strong>{% if operator_contact %}
 (<a href="mailto:{{ operator_contact }}">{{ operator_contact }}</a>){% endif %}, who is
@@ -33,4 +34,5 @@ into <code>instance/templates/</code>.</em></p>
 immediately. To have your data fully deleted, contact the operator{% if operator_contact %}
 at <a href="mailto:{{ operator_contact }}">{{ operator_contact }}</a>{% endif %} and it
 will be removed.</p>
+</article>
 {% endblock %}
