@@ -27,18 +27,25 @@ INSTANCE_FAVICON = INSTANCE_DIR / "favicon.svg"
 MAX_BODY_BYTES = 64 * 1024
 
 
+def csrf_context(request: Request) -> dict[str, str]:
+    """Expose the request's CSRF token to every rendered template."""
+    return {"csrf": csrf_token(request)}
+
+
 def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.config = config
     app.state.engine = engine
     app.state.mailer = mailer
     app.state.admin_login_throttle = LoginThrottle()
-    templates = Jinja2Templates(directory=[INSTANCE_TEMPLATES_DIR, TEMPLATES_DIR])
+    templates = Jinja2Templates(
+        directory=[INSTANCE_TEMPLATES_DIR, TEMPLATES_DIR],
+        context_processors=[csrf_context],
+    )
     templates.env.globals.update(
         operator_name=config.operator_name,
         operator_contact=config.operator_contact,
         app_commit=config.commit,
-        csrf_token=csrf_token,
     )
     app.state.templates = templates
 

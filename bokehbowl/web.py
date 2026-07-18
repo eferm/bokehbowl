@@ -20,7 +20,6 @@ from sqlalchemy.orm import Session
 
 from bokehbowl.auth import (
     consume_login_code,
-    csrf_token,
     require_csrf,
     send_login_code,
     volume_capped,
@@ -131,9 +130,7 @@ def apply_address(recipient: Recipient, form: AddressForm) -> None:
 
 @router.get("/")
 def index(request: Request, templates: Templates):
-    return templates.TemplateResponse(
-        request, "index.html", {"csrf": csrf_token(request), "error": None}
-    )
+    return templates.TemplateResponse(request, "index.html", {"error": None})
 
 
 @router.post("/signup")
@@ -150,7 +147,6 @@ def signup(
             request,
             "index.html",
             {
-                "csrf": csrf_token(request),
                 "error": (
                     "Sign-in codes are temporarily unavailable. Try again in an hour."
                 ),
@@ -175,9 +171,7 @@ def signup(
 
 @router.get("/login")
 def login_form(request: Request, templates: Templates):
-    return templates.TemplateResponse(
-        request, "login.html", {"csrf": csrf_token(request), "error": None}
-    )
+    return templates.TemplateResponse(request, "login.html", {"error": None})
 
 
 @router.post("/login")
@@ -194,7 +188,6 @@ def login(
             request,
             "login.html",
             {
-                "csrf": csrf_token(request),
                 "error": (
                     "Sign-in codes are temporarily unavailable. Try again in an hour."
                 ),
@@ -213,7 +206,7 @@ def verify_form(request: Request, templates: Templates, email: str):
     return templates.TemplateResponse(
         request,
         "verify.html",
-        {"csrf": csrf_token(request), "email": normalize_email(email), "error": None},
+        {"email": normalize_email(email), "error": None},
     )
 
 
@@ -230,7 +223,6 @@ def verify(
             request,
             "verify.html",
             {
-                "csrf": csrf_token(request),
                 "email": address,
                 "error": "That code didn't work. Check it, or request a new one.",
             },
@@ -257,7 +249,6 @@ def account(request: Request, templates: Templates, recipient: CurrentRecipient)
         request,
         "account.html",
         {
-            "csrf": csrf_token(request),
             "recipient": recipient,
             "created": request.query_params.get("created") == "1",
             "saved": "saved" in request.query_params,
