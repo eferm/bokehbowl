@@ -7,13 +7,13 @@
   <link rel="stylesheet" href="/static/site.css">
   <title>{% block title %}bokehbowl{% endblock %}</title>
 </head>
-<body class="{% block theme_class %}photo-theme{% endblock %} {% block body_class %}{% endblock %}">
+<body class="{% block body_class %}photo-theme{% endblock %}">
   <div class="site-shell">
   <header class="site-header">
     <a class="site-brand" href="/">bokehbowl</a>
     <nav class="site-nav">
       <a href="/account">Account</a>
-      {% if request.session.get("recipient_id") %}
+      {% if request.session.get("recipient_token") %}
       <form class="header-signout" method="post" action="/logout">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <button type="submit">Sign out</button>

@@ -221,7 +221,7 @@ def test_mailing_workflow(client, mailer):
     detail_url = create_mailing(client, csrf)
 
     detail = client.get(detail_url).text
-    assert 'class=" admin"' in detail
+    assert 'class="admin"' in detail
     assert "To send (1)" in detail
     assert "Ada Lovelace" in detail
 

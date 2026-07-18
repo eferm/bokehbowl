@@ -59,10 +59,8 @@ class RecipientSession(Base):
 
     __tablename__ = "recipient_sessions"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    recipient_id: Mapped[str] = mapped_column(ForeignKey("recipients.id"), index=True)
-    token: Mapped[str] = mapped_column(String(43), unique=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    token: Mapped[str] = mapped_column(String(43), primary_key=True)
+    recipient_id: Mapped[str] = mapped_column(ForeignKey("recipients.id"))
 
     recipient: Mapped[Recipient] = relationship(back_populates="sessions")
 

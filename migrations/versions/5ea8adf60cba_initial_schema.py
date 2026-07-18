@@ -59,16 +59,11 @@ def upgrade() -> None:
         batch_op.create_index(batch_op.f('ix_recipients_email'), ['email'], unique=True)
 
     op.create_table('recipient_sessions',
-    sa.Column('id', sa.String(length=36), nullable=False),
-    sa.Column('recipient_id', sa.String(length=36), nullable=False),
     sa.Column('token', sa.String(length=43), nullable=False),
-    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('recipient_id', sa.String(length=36), nullable=False),
     sa.ForeignKeyConstraint(['recipient_id'], ['recipients.id'], ),
-    sa.PrimaryKeyConstraint('id')
+    sa.PrimaryKeyConstraint('token')
     )
-    with op.batch_alter_table('recipient_sessions', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_recipient_sessions_recipient_id'), ['recipient_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_recipient_sessions_token'), ['token'], unique=True)
 
     op.create_table('recipient_versions',
     sa.Column('id', sa.String(length=36), nullable=False),
@@ -118,10 +113,6 @@ def downgrade() -> None:
         batch_op.drop_index(batch_op.f('ix_recipient_versions_recipient_id'))
 
     op.drop_table('recipient_versions')
-    with op.batch_alter_table('recipient_sessions', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_recipient_sessions_token'))
-        batch_op.drop_index(batch_op.f('ix_recipient_sessions_recipient_id'))
-
     op.drop_table('recipient_sessions')
     with op.batch_alter_table('recipients', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_recipients_email'))

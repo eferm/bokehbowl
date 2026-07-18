@@ -52,16 +52,10 @@ Mail = Annotated[Mailer, Depends(get_mailer)]
 
 
 def require_recipient(request: Request, db: Db) -> Recipient:
-    recipient_id = request.session.get("recipient_id")
     recipient_token = request.session.get("recipient_token")
-    if not isinstance(recipient_id, str) or not isinstance(recipient_token, str):
+    if not isinstance(recipient_token, str):
         raise LoginRequired()
-    session = db.scalar(
-        select(RecipientSession).where(
-            RecipientSession.recipient_id == recipient_id,
-            RecipientSession.token == recipient_token,
-        )
-    )
+    session = db.get(RecipientSession, recipient_token)
     if session is None:
         raise LoginRequired()
     return session.recipient
@@ -241,7 +235,6 @@ def verify(
         token=secrets.token_urlsafe(32),
     )
     db.add(session)
-    request.session["recipient_id"] = recipient.id
     request.session["recipient_token"] = session.token
     db.commit()
     destination = "/account?created=1" if newly_verified else "/account"
@@ -281,7 +274,6 @@ def unregister(request: Request, db: Db, recipient: CurrentRecipient):
     db.execute(
         delete(RecipientSession).where(RecipientSession.recipient_id == recipient.id)
     )
-    request.session.pop("recipient_id", None)
     request.session.pop("recipient_token", None)
     return RedirectResponse("/goodbye", status_code=303)
 
@@ -310,15 +302,10 @@ def goodbye(request: Request, templates: Templates):
 
 @router.post("/logout")
 def logout(request: Request, db: Db):
-    recipient_id = request.session.get("recipient_id")
     recipient_token = request.session.get("recipient_token")
-    if isinstance(recipient_id, str) and isinstance(recipient_token, str):
+    if isinstance(recipient_token, str):
         db.execute(
-            delete(RecipientSession).where(
-                RecipientSession.recipient_id == recipient_id,
-                RecipientSession.token == recipient_token,
-            )
+            delete(RecipientSession).where(RecipientSession.token == recipient_token)
         )
-    request.session.pop("recipient_id", None)
     request.session.pop("recipient_token", None)
     return RedirectResponse("/", status_code=303)

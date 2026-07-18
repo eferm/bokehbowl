@@ -37,14 +37,14 @@ def test_authenticated_header_offers_sign_out(client, mailer):
     assert "Sign out" in client.get("/").text
 
 
-def test_session_cookie_carries_uuid(client, mailer):
-    """The session cookie payload is client-readable base64; the recipient id
-    inside is a UUID string."""
+def test_session_cookie_carries_token(client, mailer):
+    """The client-readable session payload contains only an opaque token."""
     sign_up_and_verify(client, mailer)
     encoded = client.cookies["session"].split(".")[0]
     payload = json.loads(base64.b64decode(encoded + "=" * (-len(encoded) % 4)))
-    assert isinstance(payload["recipient_id"], str)
-    assert len(payload["recipient_id"]) == 36
+    assert "recipient_id" not in payload
+    assert isinstance(payload["recipient_token"], str)
+    assert len(payload["recipient_token"]) == 43
 
 
 def test_email_is_normalized_and_not_duplicated(client, mailer):
