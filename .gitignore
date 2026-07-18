@@ -12,3 +12,4 @@ wheels/
 # Local database and secrets
 data/
 .env
+.security-audit-skill/

@@ -45,8 +45,8 @@ traffic to your origin as plaintext HTTP across the public internet.
 For an instance on the open internet, one Cloudflare rate-limiting rule (Security →
 WAF, included in the free plan) matching `POST` to `/signup`, `/login`, and
 `/admin/login` throttles per-IP bursts: password guessing on the admin login and
-code-email floods on the public forms. The app's own hourly and daily caps on code
-emails bound the total volume behind it.
+code-email floods on the public forms. Behind it, the app enforces its own hourly and
+daily caps on code emails and a throttle on admin login attempts.
 
 **Railway / Render** — create a project from this repo (both auto-detect the
 Dockerfile), attach a volume at `/app/data`, set the env vars, deploy. Pushes to the
@@ -64,7 +64,7 @@ continuous replication).
 
 **Cloudflare Workers + D1 (experimental)** — the app is written to be compatible with
 Cloudflare's Python Workers runtime: pure-Python dependencies, sync SQLAlchemy,
-SQLite-dialect SQL (D1 is SQLite), stateless signed-cookie sessions, no filesystem
+SQLite-dialect SQL (D1 is SQLite), signed-cookie sessions, no filesystem
 access in app code. See `worker.py` and `wrangler.toml`. Python Workers are in open
 beta, so this path is best-effort — the container path above is the supported one.
 

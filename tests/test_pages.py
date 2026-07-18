@@ -21,8 +21,36 @@ def test_about_page(client):
     assert "operator@example.com" in page.text
 
 
+def test_security_headers(client):
+    headers = client.get("/").headers
+    assert headers["X-Content-Type-Options"] == "nosniff"
+    assert headers["Referrer-Policy"] == "no-referrer"
+    assert headers["Content-Security-Policy"] == "frame-ancestors 'none'"
+
+
 def test_privacy_page(client):
     page = client.get("/privacy")
     assert page.status_code == 200
     assert "Testy Operator" in page.text
     assert "never sold" in page.text
+
+
+def test_signup_rejects_multipart(client):
+    response = client.post(
+        "/signup", data={"email": "a@example.com"}, files={"f": ("x.bin", b"xx")}
+    )
+    assert response.status_code == 415
+
+
+def test_signup_rejects_oversized_body(client):
+    response = client.post("/signup", data={"email": "a" * 70000})
+    assert response.status_code == 413
+
+
+def test_signup_rejects_chunked_body(client):
+    response = client.post(
+        "/signup",
+        content=iter([b"email=a%40example.com&" + b"padding=" + b"x" * 70_000]),
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 411

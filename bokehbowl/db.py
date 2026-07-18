@@ -34,7 +34,7 @@ class Recipient(Base):
     __tablename__ = "recipients"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(200))
     address_line1: Mapped[str] = mapped_column(String(200))
     address_line2: Mapped[str | None] = mapped_column(String(200))
@@ -45,6 +45,7 @@ class Recipient(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     verified_at: Mapped[datetime | None]
     unsubscribed_at: Mapped[datetime | None]
+    session_token: Mapped[str | None] = mapped_column(String(43))
 
     versions: Mapped[list["RecipientVersion"]] = relationship(
         back_populates="recipient"
@@ -60,7 +61,7 @@ class RecipientVersion(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     recipient_id: Mapped[str] = mapped_column(ForeignKey("recipients.id"), index=True)
-    email: Mapped[str] = mapped_column(String(320))
+    email: Mapped[str] = mapped_column(String(254))
     name: Mapped[str] = mapped_column(String(200))
     address_line1: Mapped[str] = mapped_column(String(200))
     address_line2: Mapped[str | None] = mapped_column(String(200))
@@ -111,12 +112,21 @@ class LoginCode(Base):
     __tablename__ = "login_codes"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    email: Mapped[str] = mapped_column(String(320), index=True)
+    email: Mapped[str] = mapped_column(String(254), index=True)
     code_hash: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     expires_at: Mapped[datetime]
     consumed_at: Mapped[datetime | None]
     attempts: Mapped[int] = mapped_column(default=0)
+
+
+class AdminSession(Base):
+    """One signed-in admin browser session."""
+
+    __tablename__ = "admin_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
 SNAPSHOT_FIELDS = (
