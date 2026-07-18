@@ -1,22 +1,23 @@
 {% extends "base.html" %}
+{% from "components/form_fields.html" import mailing_address_fields %}
+{% block body_class %}home{% endblock %}
 {% block content %}
-<p>I take pictures. I print them and mail them to people, free of charge.
-Leave your address and one will show up eventually.</p>
+<div class="home-layout">
+  <section class="home-intro" aria-labelledby="home-heading">
+    <p class="eyebrow">Photographs by post</p>
+    <h1 id="home-heading">Photographs are better on paper.</h1>
+    <p>I take photos, print them, and send them to people who would like one.
+    It is free and deliberately slow.</p>
+  </section>
 
-{% if error %}<p role="alert"><strong>{{ error }}</strong></p>{% endif %}
-<form method="post" action="/signup">
-  <input type="hidden" name="csrf" value="{{ csrf }}">
-  <fieldset>
-    <legend>Sign up to receive the next picture</legend>
-    <p><label>Name<br><input name="name" required autocomplete="name"></label></p>
-    <p><label>Email<br><input name="email" type="email" required autocomplete="email"></label></p>
-    <p><label>Address line 1<br><input name="address_line1" required autocomplete="address-line1"></label></p>
-    <p><label>Address line 2 (optional)<br><input name="address_line2" autocomplete="address-line2"></label></p>
-    <p><label>City<br><input name="city" required autocomplete="address-level2"></label></p>
-    <p><label>State / region<br><input name="region" autocomplete="address-level1"></label></p>
-    <p><label>Postal code<br><input name="postal_code" required autocomplete="postal-code"></label></p>
-    <p><label>Country<br><input name="country" required autocomplete="country-name"></label></p>
-    <p><button type="submit">Sign up</button></p>
-  </fieldset>
-</form>
+  <section class="signup" aria-labelledby="signup-heading">
+    <h2 id="signup-heading">Get the next mailing</h2>
+    {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+    <form class="form-stack" method="post" action="/signup">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {{ mailing_address_fields() }}
+      <button type="submit">Join the list</button>
+    </form>
+  </section>
+</div>
 {% endblock %}

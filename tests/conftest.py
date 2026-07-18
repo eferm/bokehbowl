@@ -81,4 +81,4 @@ def sign_up_and_verify(client, mailer) -> None:
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == "/account"
+    assert response.headers["location"] == "/account?created=1"

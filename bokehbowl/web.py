@@ -239,14 +239,16 @@ def verify(
     recipient = db.scalar(select(Recipient).where(Recipient.email == address))
     if recipient is None:
         raise LoginRequired()
-    if recipient.verified_at is None:
+    newly_verified = recipient.verified_at is None
+    if newly_verified:
         recipient.verified_at = utcnow()
     if recipient.session_token is None:
         recipient.session_token = secrets.token_urlsafe(32)
     request.session["recipient_id"] = recipient.id
     request.session["recipient_token"] = recipient.session_token
     db.commit()
-    return RedirectResponse("/account", status_code=303)
+    destination = "/account?created=1" if newly_verified else "/account"
+    return RedirectResponse(destination, status_code=303)
 
 
 @router.get("/account")
@@ -257,6 +259,7 @@ def account(request: Request, templates: Templates, recipient: CurrentRecipient)
         {
             "csrf": csrf_token(request),
             "recipient": recipient,
+            "created": request.query_params.get("created") == "1",
             "saved": "saved" in request.query_params,
         },
     )

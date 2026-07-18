@@ -1,5 +1,13 @@
-def test_footer_names_operator(client):
-    assert "Testy Operator" in client.get("/").text
+def test_home_page_uses_gallery_design(client):
+    page = client.get("/").text
+    assert "Photographs are better on paper." in page
+    assert "Free pictures, mailed occasionally." in page
+
+
+def test_site_stylesheet_served(client):
+    response = client.get("/static/site.css")
+    assert response.status_code == 200
+    assert "text/css" in response.headers["content-type"]
 
 
 def test_favicon_served(client):

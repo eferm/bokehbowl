@@ -7,16 +7,19 @@ from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Engine
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.staticfiles import StaticFiles
 
 from bokehbowl.admin import AdminRequired, LoginThrottle
 from bokehbowl.admin import router as admin_router
+from bokehbowl.auth import csrf_token
 from bokehbowl.config import AppConfig
 from bokehbowl.mailer import Mailer
 from bokehbowl.web import LoginRequired
 from bokehbowl.web import router as web_router
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
-DEFAULT_FAVICON = Path(__file__).parent / "static" / "favicon.svg"
+STATIC_DIR = Path(__file__).parent / "static"
+DEFAULT_FAVICON = STATIC_DIR / "favicon.svg"
 INSTANCE_DIR = Path("instance")
 INSTANCE_TEMPLATES_DIR = INSTANCE_DIR / "templates"
 INSTANCE_FAVICON = INSTANCE_DIR / "favicon.svg"
@@ -35,6 +38,7 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
         operator_name=config.operator_name,
         operator_contact=config.operator_contact,
         app_commit=config.commit,
+        csrf_token=csrf_token,
     )
     app.state.templates = templates
 
@@ -43,6 +47,8 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
     @app.get("/favicon.ico")
     def favicon_file() -> FileResponse:
         return FileResponse(favicon)
+
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     app.add_middleware(
         SessionMiddleware,

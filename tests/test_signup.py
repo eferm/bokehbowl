@@ -16,6 +16,25 @@ def test_signup_sends_code_and_verify_logs_in(client, mailer):
     assert account.status_code == 200
     assert "ada@example.com" in account.text
     assert "Ada Lovelace" in account.text
+    assert "Full Name" in account.text
+    assert "State / Province" in account.text
+    assert "Postal Code" in account.text
+
+
+def test_first_signup_shows_confirmation(client, mailer):
+    csrf = csrf_from(client.get("/").text)
+    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
+    response = client.post(
+        "/verify",
+        data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
+        follow_redirects=True,
+    )
+    assert "You're on the list." in response.text
+
+
+def test_authenticated_header_offers_sign_out(client, mailer):
+    sign_up_and_verify(client, mailer)
+    assert "Sign out" in client.get("/").text
 
 
 def test_session_cookie_carries_uuid(client, mailer):
