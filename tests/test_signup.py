@@ -1,6 +1,7 @@
 import base64
 import json
 
+from bokehbowl import auth
 from tests.conftest import SIGNUP_FORM, csrf_from, sign_up_and_verify
 
 
@@ -91,3 +92,14 @@ def test_resend_is_rate_limited(client, mailer):
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
     client.post("/login", data={"csrf": csrf, "email": "ada@example.com"})
     assert len(mailer.sent) == 1
+
+
+def test_code_volume_is_capped(client, mailer, monkeypatch):
+    monkeypatch.setattr(auth, "HOURLY_CODE_CAP", 2)
+    csrf = csrf_from(client.get("/").text)
+    for n in range(3):
+        client.post(
+            "/signup",
+            data={**SIGNUP_FORM, "email": f"user{n}@example.com", "csrf": csrf},
+        )
+    assert len(mailer.sent) == 2

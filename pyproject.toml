@@ -1,7 +1,7 @@
 [project]
 name = "bokehbowl"
 version = "0.1.0"
-description = "A tiny web app for mailing postcards to people who ask for one"
+description = "A tiny web app for mailing pictures to people who ask for one"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -31,6 +31,9 @@ extend-exclude = ["migrations/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+extra-standard-library = ["uuid6"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

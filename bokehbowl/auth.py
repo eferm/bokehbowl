@@ -5,7 +5,7 @@ import secrets
 from datetime import datetime, timedelta
 
 from fastapi import HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from bokehbowl.db import LoginCode, utcnow
@@ -14,10 +14,16 @@ from bokehbowl.mailer import Mailer
 CODE_TTL = timedelta(minutes=10)
 RESEND_COOLDOWN = timedelta(seconds=60)
 MAX_ATTEMPTS = 5
+HOURLY_CODE_CAP = 50
+DAILY_CODE_CAP = 300
 
 
 class CooldownActive(Exception):
     """A code was issued for this email too recently."""
+
+
+class CapReached(Exception):
+    """The instance-wide code volume cap is reached."""
 
 
 def hash_code(email: str, code: str) -> str:
@@ -33,11 +39,24 @@ def latest_code(db: Session, email: str) -> LoginCode | None:
     )
 
 
+def codes_issued_since(db: Session, cutoff: datetime) -> int:
+    return db.scalar(
+        select(func.count())
+        .select_from(LoginCode)
+        .where(LoginCode.created_at >= cutoff)
+    )
+
+
 def issue_login_code(db: Session, email: str, now: datetime) -> str:
-    """Create and store a fresh code. Raises CooldownActive when issued too recently."""
+    """Create and store a fresh code. Raises CooldownActive when issued too recently,
+    CapReached when the instance-wide hourly or daily volume cap is hit."""
     current = latest_code(db, email)
     if current is not None and now - current.created_at < RESEND_COOLDOWN:
         raise CooldownActive(email)
+    if codes_issued_since(db, now - timedelta(hours=1)) >= HOURLY_CODE_CAP:
+        raise CapReached()
+    if codes_issued_since(db, now - timedelta(days=1)) >= DAILY_CODE_CAP:
+        raise CapReached()
     code = f"{secrets.randbelow(1_000_000):06d}"
     db.add(
         LoginCode(
@@ -74,10 +93,11 @@ def require_csrf(request: Request, token: str) -> None:
 
 
 def send_login_code(db: Session, mailer: Mailer, email: str) -> None:
-    """Issue a code and email it; silently keeps the current code during cooldown."""
+    """Issue a code and email it; silently sends nothing during cooldown or past
+    the volume caps."""
     try:
         code = issue_login_code(db, email, utcnow())
-    except CooldownActive:
+    except (CooldownActive, CapReached):
         return
     mailer.send(
         to=email,
