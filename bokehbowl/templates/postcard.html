@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}{{ postcard.title }} — bokehbowl admin{% endblock %}
+{% block content %}
+<p><a href="/admin?table=postcards">&larr; all postcards</a></p>
+<h2>{{ postcard.title }}</h2>
+<p>Created {{ postcard.created_at.date() }}.</p>
+
+<h3>To send ({{ pending | length }})</h3>
+<p><a href="/admin/postcards/{{ postcard.id }}/labels.csv">Export this list as CSV</a></p>
+<table border="1" cellpadding="6">
+  <thead>
+    <tr><th>Name</th><th>Address</th><th>Email</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for r in pending %}
+    <tr>
+      <td>{{ r.name }}</td>
+      <td>
+        {{ r.address_line1 }}{% if r.address_line2 %}<br>{{ r.address_line2 }}{% endif %}<br>
+        {{ r.city }}{% if r.region %}, {{ r.region }}{% endif %} {{ r.postal_code }}<br>
+        {{ r.country }}
+      </td>
+      <td>{{ r.email }}</td>
+      <td>
+        <form method="post" action="/admin/postcards/{{ postcard.id }}/send/{{ r.id }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit">Mark sent</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">Nobody left to send to.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if late %}
+<details>
+  <summary>Signed up after this postcard ({{ late | length }}) — send by choice</summary>
+  <table border="1" cellpadding="6">
+    <thead>
+      <tr><th>Name</th><th>Address</th><th>Signed up</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for r in late %}
+      <tr>
+        <td>{{ r.name }}</td>
+        <td>
+          {{ r.address_line1 }}{% if r.address_line2 %}<br>{{ r.address_line2 }}{% endif %}<br>
+          {{ r.city }}{% if r.region %}, {{ r.region }}{% endif %} {{ r.postal_code }}<br>
+          {{ r.country }}
+        </td>
+        <td>{{ r.created_at.date() }}</td>
+        <td>
+          <form method="post" action="/admin/postcards/{{ postcard.id }}/send/{{ r.id }}">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit">Mark sent</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</details>
+{% endif %}
+
+<h3>Sent ({{ sendings | length }})</h3>
+<table border="1" cellpadding="6">
+  <thead>
+    <tr><th>Name</th><th>Sent</th><th>Address on card</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for s in sendings %}
+    <tr>
+      <td>{{ s.recipient.name }}</td>
+      <td>{{ s.sent_at.date() }}</td>
+      <td>
+        {{ s.recipient_version.address_line1 }},
+        {{ s.recipient_version.city }} {{ s.recipient_version.postal_code }},
+        {{ s.recipient_version.country }}
+      </td>
+      <td>
+        <form method="post" action="/admin/sendings/{{ s.id }}/delete">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit">Undo</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">None sent yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

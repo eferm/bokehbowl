@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Your account — bokehbowl{% endblock %}
+{% block content %}
+<h2>Your account</h2>
+{% if saved %}<p role="status"><strong>Saved.</strong></p>{% endif %}
+{% if recipient.unsubscribed_at %}
+<p>You're currently <strong>unregistered</strong> — no postcards will be sent.</p>
+<form method="post" action="/account/reregister">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <p><button type="submit">Reregister</button></p>
+</form>
+{% endif %}
+<form method="post" action="/account">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <p>Signed in as <strong>{{ recipient.email }}</strong></p>
+  <p><label>Name<br><input name="name" value="{{ recipient.name }}" required></label></p>
+  <p><label>Address line 1<br><input name="address_line1" value="{{ recipient.address_line1 }}" required></label></p>
+  <p><label>Address line 2 (optional)<br><input name="address_line2" value="{{ recipient.address_line2 or '' }}"></label></p>
+  <p><label>City<br><input name="city" value="{{ recipient.city }}" required></label></p>
+  <p><label>State / region<br><input name="region" value="{{ recipient.region or '' }}"></label></p>
+  <p><label>Postal code<br><input name="postal_code" value="{{ recipient.postal_code }}" required></label></p>
+  <p><label>Country<br><input name="country" value="{{ recipient.country }}" required></label></p>
+  <p><button type="submit">Save</button></p>
+</form>
+<hr>
+<form method="post" action="/logout">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <p><button type="submit">Sign out</button></p>
+</form>
+{% if not recipient.unsubscribed_at %}
+<form method="post" action="/account/unregister">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <p><button type="submit">Unregister (stop sending me postcards)</button></p>
+</form>
+{% endif %}
+{% endblock %}

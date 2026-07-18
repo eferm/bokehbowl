@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Admin — bokehbowl{% endblock %}
+{% block content %}
+<h2>Admin</h2>
+<nav>
+  {% for name, count in counts.items() %}
+  <a href="/admin?table={{ name }}">{% if name == table %}<strong>{{ name }} ({{ count }})</strong>{% else %}{{ name }} ({{ count }}){% endif %}</a> ·
+  {% endfor %}
+  <a href="/admin/export.csv?table={{ table }}">Export {{ table }} as CSV</a>
+</nav>
+{% if table == "postcards" %}
+<form method="post" action="/admin/postcards">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <p><label>New postcard <input name="title" required placeholder="sailboat photo"></label>
+  <button type="submit">Create</button></p>
+</form>
+{% endif %}
+{% set has_actions = table in ("recipients", "postcards") %}
+<table border="1" cellpadding="6">
+  <thead>
+    <tr>
+      {% for column in columns %}<th>{{ column }}</th>{% endfor %}
+      {% if has_actions %}<th>actions</th>{% endif %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      {% for cell in row %}<td>{{ cell if cell is not none else "" }}</td>{% endfor %}
+      {% if table == "recipients" %}
+      <td>
+        {% if row[columns.index("unsubscribed_at")] %}
+        <form method="post" action="/admin/recipients/{{ row[0] }}/reregister">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit">Reregister</button>
+        </form>
+        {% else %}
+        <form method="post" action="/admin/recipients/{{ row[0] }}/unregister">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit">Unregister</button>
+        </form>
+        {% endif %}
+      </td>
+      {% elif table == "postcards" %}
+      <td><a href="/admin/postcards/{{ row[0] }}">Open</a></td>
+      {% endif %}
+    </tr>
+    {% else %}
+    <tr><td colspan="{{ columns | length + 1 }}">Nothing here yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<hr>
+<form method="post" action="/admin/logout">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <p><button type="submit">Sign out</button></p>
+</form>
+{% endblock %}
