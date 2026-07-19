@@ -154,7 +154,7 @@ a { color: inherit; }
 .site-footer code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .85em;
-  opacity: .5;
+  opacity: .7;
 }
 
 .home-layout {
@@ -252,7 +252,7 @@ a { color: inherit; }
   gap: 1rem;
 }
 
-.form-stack--inline .form-label { flex: 1; }
+.form-stack--inline .form-label { flex: 0 0 auto; }
 
 .form-label {
   display: grid;

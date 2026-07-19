@@ -272,7 +272,7 @@ def eligible_recipients(db: Session) -> list[Recipient]:
                 Recipient.verified_at.is_not(None),
                 Recipient.unsubscribed_at.is_(None),
             )
-            .order_by(Recipient.name)
+            .order_by(Recipient.created_at)
         )
     )
 
