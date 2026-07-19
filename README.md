@@ -1,18 +1,14 @@
 # bokehbowl
 
-A tiny web app for mailing pictures to people who ask for one. People sign up with
-their name, email, and postal address; you (the admin) see a queue of who to send to,
-mark them sent, and export addresses for printing. Free of charge, just for fun.
-The frontend says "picture", but the capability is generic — an instance can just as
-well send postcards, photos in envelopes, or letters.
+A small web app for mailing pictures, postcards, photos, or letters to people who
+request one. People provide their name, email address, and postal address. The
+operator confirms requests by email, prepares mailing batches, and exports address
+labels.
 
-**Stack:** Python 3.12 · FastAPI · SQLAlchemy 2.0 · SQLite · Alembic · Jinja2 · uv · ruff
+**Stack:** Python 3.12, FastAPI, Pydantic, SQLAlchemy, SQLite, Alembic, Jinja2, uv,
+and ruff.
 
-**Auth:** passwordless — a 6-digit code emailed on sign-up/sign-in (which doubles as
-email verification). No passwords stored, no third-party identity provider. Code
-emails are rate limited.
-
-## Run it locally
+## Run locally
 
 ```sh
 git clone <this repo> && cd bokehbowl
@@ -21,134 +17,82 @@ uv run alembic upgrade head
 SESSION_SECRET=dev ADMIN_PASSWORD=admin COOKIE_SECURE=false uv run uvicorn main:app --reload
 ```
 
-Open http://localhost:8000 — sign-in codes are printed to the terminal (the `console`
-mail backend, the default). The admin lives at http://localhost:8000/admin.
+Open http://localhost:8000. The default console mail backend prints sign-in codes
+to the terminal. Visit http://localhost:8000/admin to sign in as the operator.
 
-## Configuration
+## Configure an instance
 
-Everything is environment variables — see `.env.example`. Required: `SESSION_SECRET`
-(any long random string) and `ADMIN_PASSWORD`. To send real email, set
-`MAIL_BACKEND=smtp` plus the `SMTP_*` variables; the defaults in `.env.example` point
-at Cloudflare Email Service's SMTP endpoint, but any SMTPS provider works.
+Place `index.html` or `privacy.html` in `instance/templates/` to customize those
+pages. These templates extend the supplied layout; see
+[`instance/templates/README.md`](instance/templates/README.md). An
+`instance/favicon.svg` file replaces the default icon.
 
-## Deploy
+Review `/privacy` before opening the instance to signups.
 
-The Dockerfile is the deploy story. It runs database migrations on boot, then serves
-on port 8000. Uvicorn is started with `--proxy-headers`, so behind a platform edge or
-reverse proxy the app sees the real scheme and client IP from `X-Forwarded-*`.
+## Deploy with Docker
 
-Whatever host you pick, terminate HTTPS in front of the app. If that front is
-Cloudflare, use a Cloudflare Tunnel or **Full (strict)** TLS with an origin
-certificate — Flexible mode encrypts only the visitor-to-Cloudflare half and carries
-traffic to your origin as plaintext HTTP across the public internet.
+Docker Compose is the supported deployment path.
 
-For an instance on the open internet, one Cloudflare rate-limiting rule (Security →
-WAF, included in the free plan) matching `POST` to `/signup`, `/login`, and
-`/admin/login` throttles per-IP bursts: password guessing on the admin login and
-code-email floods on the public forms. Behind it, the app enforces its own hourly and
-daily caps on code emails and a throttle on admin login attempts.
 
-**Railway / Render** — create a project from this repo (both auto-detect the
-Dockerfile), attach a volume at `/app/data`, set the env vars, deploy. Pushes to the
-repo auto-deploy from then on.
+```sh
+cp .env.example .env
+```
 
-**Fly.io** — `fly launch` (add a volume for `/app/data` when prompted), `fly secrets set
-SESSION_SECRET=... ADMIN_PASSWORD=...`, then `fly deploy`.
+Copy `.env.example` to `.env` and set `SESSION_SECRET` and `ADMIN_PASSWORD` to
+strong values. Set `OPERATOR_NAME` and `OPERATOR_EMAIL` for the privacy page and
+signup notifications. `NOTIFY_EMAIL` sends those notifications elsewhere.
 
-**Self-host (any VPS)** — `cp .env.example .env`, edit it, then `docker compose up -d`.
-The compose file binds to `127.0.0.1`, so the app is reachable only through whatever
-you put in front of it on the same machine (a reverse proxy or a Cloudflare Tunnel) —
-never directly from the network. The SQLite database lands in `./data/`; back it up by
-copying that directory (or point [Litestream](https://litestream.io/) at it for
-continuous replication).
+Set `MAIL_BACKEND=smtp` and the `SMTP_*` variables to send email through an SMTPS
+provider. The example values use Cloudflare Email Service.
 
-**Cloudflare Workers + D1 (experimental)** — the app is written to be compatible with
-Cloudflare's Python Workers runtime: pure-Python dependencies, sync SQLAlchemy,
-SQLite-dialect SQL (D1 is SQLite), signed-cookie sessions, no filesystem
-access in app code. See `worker.py` and `wrangler.toml`. Python Workers are in open
-beta, so this path is best-effort — the container path above is the supported one.
+```sh
+docker compose up -d --build
+```
 
-## Make it yours
+Compose binds the app to `127.0.0.1:8000`. Put an HTTPS reverse proxy or Cloudflare
+Tunnel in front of it. The container applies Alembic migrations at startup. SQLite
+data lives in `./data/`; copy that directory as part of your backup routine.
 
-Each instance names its operator: set `OPERATOR_NAME` and `OPERATOR_EMAIL`. Both
-appear on the `/privacy` page, and the email receives a notification for each
-verified signup (`NOTIFY_EMAIL` overrides the notification address). For a fully
-custom front page, drop templates into `instance/templates/` — they shadow the
-defaults (see the README in that directory). A `favicon.svg` dropped into `instance/`
-replaces the default mailbox icon. Forks commit their
-`instance/` folder; docker-compose users can just edit it in place (it's mounted into
-the container).
+For a Cloudflare proxy, use Full (strict) TLS with an origin certificate, or use a
+Cloudflare Tunnel. A rate-limiting rule for `POST /signup`, `POST /login`, and
+`POST /admin/login` adds edge protection for public instances.
 
-The default `/privacy` page honestly describes what this app does (and doesn't do)
-with data, naming your `OPERATOR_*` values as the responsible party — review it once
-before going live, since you're the one collecting addresses.
+### Updates
 
-### Keeping your instance up to date
+Keep `.env`, `data/`, and `instance/` outside the repository's tracked files. After
+pulling an update, rebuild and restart:
 
-All per-instance state lives in channels this repo never touches: environment
-variables, `data/` (gitignored), and your own files in `instance/templates/`. Stay
-inside those and updating is conflict-free:
+```sh
+git pull
+docker compose up -d --build
+```
 
-- **Fork workflow** (needed for Railway/Render, which deploy from your repo): commit
-  your `instance/` files to your fork, then use GitHub's *Sync fork* (or merge
-  `upstream/main`) to pull updates — your platform redeploys.
-- **No-fork workflow** (docker-compose): your `instance/` files and `.env` are
-  untracked, so updating is `git pull && docker compose up -d --build`. Back up
-  `instance/` and `.env` yourself.
+Back up `data/`, `.env`, and `instance/` before updates.
 
-**Database upgrades are automatic** in both flows: the container runs
-`alembic upgrade head` on every boot, applying any new schema migrations before the
-app serves (and doing nothing when there are none). If you run without Docker, that
-command is yours to run after pulling: `uv sync && uv run alembic upgrade head`,
-then restart. Either way, copying `data/bokehbowl.db` aside before an upgrade is
-cheap insurance.
+## Deploy on Cloudflare
 
-Editing the app's own files instead means ordinary merge-conflict life — allowed, but
-no longer guaranteed painless.
+Experimental support for Cloudflare Workers + D1 (experimental)
 
-If you're hosting from this repo itself (rather than a fork), keep `main` generic and
-commit your instance files on a `deploy` branch; point your host at that branch and
-update it with `git merge main`. Never merge the deploy branch back into `main` —
-that's how your personal front page becomes everyone's default.
+The Workers entrypoint is experimental. `worker.py` describes the required D1
+database setup, bindings, secrets, and deployment command; `wrangler.toml` supplies
+the Worker configuration.
 
-## Admin & data model
+## Usage Manual
 
-`/admin` shows the raw database tables, one view per table (columns come straight from
-the schema), each exportable as CSV. Primary keys are UUIDv7 strings:
+### Create a mailing
 
-- **recipients** — one row per person, current state. *Unregister* here is a soft
-  delete (timestamp); people can also unregister/rejoin themselves from their account
-  page.
-- **recipient_versions** — append-only history: one row per state a recipient has ever
-  been in (written on signup and on every real change; a no-op save appends nothing).
-  A version is valid from its `valid_from` until the next version's.
-- **mailings** — one row per specific thing sent to many people ("sailboat
-  postcard"): a postcard design or print run, a photo, a letter — the schema
-  doesn't care what's inside the envelope.
-- **mailpieces** — one row per physical piece mailed (USPS's word): which mailing,
-  to which recipient, at which exact address version. A person can receive each
-  mailing once (unique constraint).
-
-### Sending a batch
-
-Create a mailing on the mailings view, then open it: the detail page shows **To
-send** — everyone eligible (verified, not unregistered) who hasn't received this
-mailing — with addresses to copy and a CSV export for labels. *Mark sent* records one
-mailpiece pinned to the person's current address version; *Undo* fixes a mis-click.
-People who unregister drop out of To send automatically. People who signed up *after*
-the mailing was created sit in a collapsed "Signed up after this mailing" section,
-sendable by explicit choice.
+At `/admin`, create a mailing and open it. The mailing page lists eligible recipients
+and provides a CSV export for labels. Marking an item sent records the address used
+for that mailing. Recipients joining after the mailing's creation appear separately
+and can be included deliberately.
 
 ## Development
 
 ```sh
-uv run pytest        # tests
-uv run ruff check .  # lint
-uv run ruff format . # format
-uv run alembic revision --autogenerate -m "..."  # after changing models in bokehbowl/db.py
+uv run pytest
+uv run ruff check .
+uv run ruff format .
+uv run alembic revision --autogenerate -m "..."
 ```
 
-Layout: `bokehbowl/` is the app (config → db → auth/mailer → web/admin routes → app
-factory), `main.py` is the container entrypoint, `migrations/` is Alembic (configured
-in `pyproject.toml`). Templates are plain semantic HTML — a design pass is
-deliberately still to come.
+Run the final command after changing the SQLAlchemy models.
