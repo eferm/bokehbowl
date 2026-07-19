@@ -23,7 +23,6 @@ DEFAULT_FAVICON = STATIC_DIR / "favicon.svg"
 INSTANCE_DIR = Path("instance")
 INSTANCE_TEMPLATES_DIR = INSTANCE_DIR / "templates"
 INSTANCE_STATIC_DIR = INSTANCE_DIR / "static"
-INSTANCE_FAVICON = INSTANCE_DIR / "favicon.svg"
 
 MAX_BODY_BYTES = 64 * 1024
 
@@ -59,7 +58,8 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
     )
     app.state.templates = templates
 
-    favicon = INSTANCE_FAVICON if INSTANCE_FAVICON.is_file() else DEFAULT_FAVICON
+    instance_favicon = INSTANCE_STATIC_DIR / "favicon.svg"
+    favicon = instance_favicon if instance_favicon.is_file() else DEFAULT_FAVICON
 
     @app.get("/favicon.ico")
     def favicon_file() -> FileResponse:

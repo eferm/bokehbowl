@@ -11,10 +11,9 @@ versions if you run from a fork, or mount this directory into the container
 (`./instance:/app/instance`, already configured in compose.yaml).
 
 Smaller customizations don't need templates at all — set the `OPERATOR_NAME` and
-`OPERATOR_EMAIL` environment variables and the defaults will use them. A
-`favicon.svg` placed one level up, in `instance/` itself, replaces the default
-mailbox icon, and files in `instance/static/` (such as `background.webp` and
-`og.jpg`) shadow the packaged defaults in `bokehbowl/static/`.
+`OPERATOR_EMAIL` environment variables and the defaults will use them. Files in
+`instance/static/` (such as `favicon.svg`, `background.webp`, and `og.jpg`)
+shadow the packaged defaults in `bokehbowl/static/`.
 
 Everything in `instance/` is operator content: it stays yours and sits outside
 the repository's MIT license.

@@ -25,11 +25,13 @@ def test_instance_static_shadows_default(make_client, monkeypatch, tmp_path):
     instance_static = tmp_path / "static"
     instance_static.mkdir()
     (instance_static / "background.webp").write_bytes(b"operator image bytes")
+    (instance_static / "favicon.svg").write_bytes(b"<svg>operator icon</svg>")
     monkeypatch.setattr("bokehbowl.app.INSTANCE_STATIC_DIR", instance_static)
     with make_client() as client:
         response = client.get("/static/background.webp")
         assert response.status_code == 200
         assert response.content == b"operator image bytes"
+        assert client.get("/favicon.ico").content == b"<svg>operator icon</svg>"
         assert client.get("/static/site.css").status_code == 200
 
 
