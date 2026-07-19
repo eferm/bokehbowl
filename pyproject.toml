@@ -3,6 +3,8 @@ name = "bokehbowl"
 version = "0.1.0"
 description = "A tiny web app for mailing pictures to people who ask for one"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.18.5",
