@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/svg+xml" href="/favicon.ico">
-  <link rel="stylesheet" href="/static/site.css">
+  <link rel="stylesheet" href="/static/site.css{% if app_commit %}?v={{ app_commit[:7] }}{% endif %}">
   <title>{% block title %}Bokehbowl{% endblock %}</title>
   <meta name="description" content="Bokehbowl mails free printed photographs to people who ask for one. Leave your address and an occasional picture shows up in your mailbox.">
   <meta property="og:type" content="website">
