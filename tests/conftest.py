@@ -9,6 +9,7 @@ from bokehbowl.app import create_app
 from bokehbowl.config import AppConfig, ConsoleMail
 from bokehbowl.db import Base
 
+
 ADMIN_PASSWORD = "test-admin-password"
 
 

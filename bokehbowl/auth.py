@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from bokehbowl.db import LoginCode, utcnow
 from bokehbowl.mailer import Mailer
 
+
 CODE_TTL = timedelta(minutes=10)
 RESEND_COOLDOWN = timedelta(seconds=60)
 MAX_ATTEMPTS = 5

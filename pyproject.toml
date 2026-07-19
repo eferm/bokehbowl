@@ -33,6 +33,7 @@ select = ["E", "F", "W", "I", "UP", "B"]
 
 [tool.ruff.lint.isort]
 extra-standard-library = ["uuid6"]
+lines-after-imports = 2
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

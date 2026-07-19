@@ -17,6 +17,7 @@ from bokehbowl.mailer import Mailer
 from bokehbowl.web import LoginRequired
 from bokehbowl.web import router as web_router
 
+
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 INSTANCE_DIR = Path("instance")

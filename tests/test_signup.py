@@ -182,9 +182,7 @@ def test_verification_prunes_expired_recipient_sessions(client, mailer):
     sign_up_and_verify(client, mailer)
     with Session(client.app.state.engine) as db:
         session = db.scalars(select(RecipientSession)).one()
-        session.created_at = utcnow() - web.RECIPIENT_SESSION_TTL - timedelta(
-            seconds=1
-        )
+        session.created_at = utcnow() - web.RECIPIENT_SESSION_TTL - timedelta(seconds=1)
         db.commit()
 
     csrf = csrf_from(client.get("/").text)

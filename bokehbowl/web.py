@@ -28,6 +28,7 @@ from bokehbowl.auth import (
 from bokehbowl.db import Recipient, RecipientSession, record_version, utcnow
 from bokehbowl.mailer import Mailer
 
+
 RECIPIENT_SESSION_TTL = timedelta(days=30)
 
 

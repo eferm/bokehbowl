@@ -25,7 +25,8 @@ def test_instance_backdrop_rendered(make_client, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     with make_client() as client:
         assert 'class="photo-theme home backdrop"' in client.get("/").text
-        assert '--backdrop: url("/static/background.webp")' in client.get("/static/site.css").text
+        css = client.get("/static/site.css").text
+        assert '--backdrop: url("/static/background.webp")' in css
         served = client.get("/static/background.webp")
         assert served.status_code == 200
         assert served.content == b"RIFF-instance-webp"

@@ -5,6 +5,7 @@ from sqlalchemy import create_engine
 
 from bokehbowl.db import Base
 
+
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///data/bokehbowl.db")
 
 target_metadata = Base.metadata
