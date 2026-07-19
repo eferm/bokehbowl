@@ -19,11 +19,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = [
-    "httpx>=0.28.1",
-    "pytest>=9.1.1",
-    "ruff>=0.15.21",
-]
+dev = ["httpx>=0.28.1", "pytest>=9.1.1", "ruff>=0.15.21"]
 
 [tool.alembic]
 script_location = "migrations"
