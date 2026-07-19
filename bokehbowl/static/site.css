@@ -72,10 +72,15 @@ a { color: inherit; }
 
 .site-header {
   grid-template-columns: 1fr auto;
+  align-items: center;
   min-height: 2rem;
 }
 
 .site-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  min-height: 2rem;
   font-size: 1.2rem;
   font-weight: 650;
   letter-spacing: -.06em;
