@@ -19,7 +19,6 @@ from bokehbowl.web import router as web_router
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
-DEFAULT_FAVICON = STATIC_DIR / "favicon.svg"
 INSTANCE_DIR = Path("instance")
 INSTANCE_TEMPLATES_DIR = INSTANCE_DIR / "templates"
 INSTANCE_STATIC_DIR = INSTANCE_DIR / "static"
@@ -58,18 +57,14 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
     )
     app.state.templates = templates
 
-    instance_favicon = INSTANCE_STATIC_DIR / "favicon.svg"
-    favicon = instance_favicon if instance_favicon.is_file() else DEFAULT_FAVICON
+    static = LayeredStaticFiles([INSTANCE_STATIC_DIR, STATIC_DIR])
 
     @app.get("/favicon.ico")
     def favicon_file() -> FileResponse:
-        return FileResponse(favicon)
+        path, _ = static.lookup_path("favicon.svg")
+        return FileResponse(path)
 
-    app.mount(
-        "/static",
-        LayeredStaticFiles([INSTANCE_STATIC_DIR, STATIC_DIR]),
-        name="static",
-    )
+    app.mount("/static", static, name="static")
 
     app.add_middleware(
         SessionMiddleware,
