@@ -19,3 +19,11 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+Scope: the license above covers every file in this repository outside the
+instance/ directory. The instance/ directory holds operator content —
+templates, images, and site copy supplied by the person running an instance —
+and is excluded from the grant above. Each operator retains all rights to the
+files they place there.

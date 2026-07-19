@@ -11,6 +11,28 @@ def test_site_stylesheet_served(client):
     assert "text/css" in response.headers["content-type"]
 
 
+def test_placeholder_artwork_served(client):
+    for path, content_type in [
+        ("/static/background.webp", "image/webp"),
+        ("/static/og.jpg", "image/jpeg"),
+    ]:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.headers["content-type"] == content_type
+
+
+def test_instance_static_shadows_default(make_client, monkeypatch, tmp_path):
+    instance_static = tmp_path / "static"
+    instance_static.mkdir()
+    (instance_static / "background.webp").write_bytes(b"operator image bytes")
+    monkeypatch.setattr("bokehbowl.app.INSTANCE_STATIC_DIR", instance_static)
+    with make_client() as client:
+        response = client.get("/static/background.webp")
+        assert response.status_code == 200
+        assert response.content == b"operator image bytes"
+        assert client.get("/static/site.css").status_code == 200
+
+
 def test_favicon_served(client):
     response = client.get("/favicon.ico")
     assert response.status_code == 200

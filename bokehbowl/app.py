@@ -22,9 +22,19 @@ STATIC_DIR = Path(__file__).parent / "static"
 DEFAULT_FAVICON = STATIC_DIR / "favicon.svg"
 INSTANCE_DIR = Path("instance")
 INSTANCE_TEMPLATES_DIR = INSTANCE_DIR / "templates"
+INSTANCE_STATIC_DIR = INSTANCE_DIR / "static"
 INSTANCE_FAVICON = INSTANCE_DIR / "favicon.svg"
 
 MAX_BODY_BYTES = 64 * 1024
+
+
+class LayeredStaticFiles(StaticFiles):
+    """Static file app that resolves paths against a stack of directories,
+    serving the first match."""
+
+    def __init__(self, directories: list[Path]) -> None:
+        super().__init__()
+        self.all_directories = [d for d in directories if d.is_dir()]
 
 
 def csrf_context(request: Request) -> dict[str, str]:
@@ -55,7 +65,11 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
     def favicon_file() -> FileResponse:
         return FileResponse(favicon)
 
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount(
+        "/static",
+        LayeredStaticFiles([INSTANCE_STATIC_DIR, STATIC_DIR]),
+        name="static",
+    )
 
     app.add_middleware(
         SessionMiddleware,

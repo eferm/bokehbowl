@@ -27,6 +27,13 @@ pages. These templates extend the supplied layout; see
 [`instance/templates/README.md`](instance/templates/README.md). An
 `instance/favicon.svg` file replaces the default icon.
 
+Files in `instance/static/` shadow the packaged defaults in `bokehbowl/static/`.
+Place your own `background.webp` and `og.jpg` there to replace the placeholder
+artwork with your photographs, or a `site.css` to restyle the whole site.
+
+Everything in `instance/` is operator content: it stays yours and sits outside
+the repository's MIT license (see [`LICENSE`](LICENSE)).
+
 Review `/privacy` before opening the instance to signups.
 
 ## Deploy with Docker
