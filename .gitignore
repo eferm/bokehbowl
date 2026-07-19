@@ -13,3 +13,9 @@ wheels/
 data/
 .env
 .security-audit-skill/
+
+# Instance content (tracked: READMEs and directory placeholders)
+instance/static/*
+!instance/static/.gitkeep
+instance/templates/*
+!instance/templates/.gitkeep
