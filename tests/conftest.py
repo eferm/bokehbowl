@@ -33,27 +33,36 @@ def mailer():
 
 
 @pytest.fixture()
-def client(mailer):
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
-    Base.metadata.create_all(engine)
-    app = create_app(
-        config=AppConfig(
-            database_url="sqlite://",
-            session_secret="test-secret",
-            admin_password=ADMIN_PASSWORD,
-            cookie_secure=True,
-            mail=ConsoleMail(),
-            operator_name="Testy Operator",
-            operator_email="operator@example.com",
-            notify_email="notify@example.com",
-            commit="abc1234def5678",
-        ),
-        engine=engine,
-        mailer=mailer,
-    )
-    with TestClient(app, base_url="https://testserver") as test_client:
+def make_client(mailer):
+    def make() -> TestClient:
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        Base.metadata.create_all(engine)
+        app = create_app(
+            config=AppConfig(
+                database_url="sqlite://",
+                session_secret="test-secret",
+                admin_password=ADMIN_PASSWORD,
+                cookie_secure=True,
+                mail=ConsoleMail(),
+                operator_name="Testy Operator",
+                operator_email="operator@example.com",
+                notify_email="notify@example.com",
+                commit="abc1234def5678",
+            ),
+            engine=engine,
+            mailer=mailer,
+        )
+        return TestClient(app, base_url="https://testserver")
+
+    return make
+
+
+@pytest.fixture()
+def client(make_client, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    with make_client() as test_client:
         yield test_client
 
 

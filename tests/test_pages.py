@@ -15,7 +15,20 @@ def test_favicon_served(client):
     response = client.get("/favicon.ico")
     assert response.status_code == 200
     assert "svg" in response.headers["content-type"]
-    assert 'href="/favicon.ico"' in client.get("/").text
+    assert 'href="/static/favicon.svg"' in client.get("/").text
+
+
+def test_instance_backdrop_rendered(make_client, monkeypatch, tmp_path):
+    image = tmp_path / "instance" / "static" / "background.webp"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"RIFF-instance-webp")
+    monkeypatch.chdir(tmp_path)
+    with make_client() as client:
+        assert 'class="photo-theme home backdrop"' in client.get("/").text
+        assert '--backdrop: url("/static/background.webp")' in client.get("/static/site.css").text
+        served = client.get("/static/background.webp")
+        assert served.status_code == 200
+        assert served.content == b"RIFF-instance-webp"
 
 
 def test_footer_shows_running_commit(client):

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="format-detection" content="telephone=no">
-  <link rel="icon" type="image/svg+xml" href="/favicon.ico">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/site.css{% if app_commit %}?v={{ app_commit[:7] }}{% endif %}">
   <title>{% block title %}Bokehbowl{% endblock %}</title>
   <meta name="description" content="Bokehbowl mails free printed photographs to people who ask for one. Leave your address and an occasional picture shows up in your mailbox.">
@@ -17,7 +17,7 @@
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
 </head>
-<body class="{% block body_class %}photo-theme{% endblock %}">
+<body class="{% block body_class %}photo-theme{% endblock %}{% if has_backdrop %} backdrop{% endif %}">
   <div class="site-shell">
   <header class="site-header">
     <a class="site-brand" href="/">bokehbowl</a>

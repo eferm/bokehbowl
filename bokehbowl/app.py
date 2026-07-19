@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Engine
 from starlette.middleware.sessions import SessionMiddleware
@@ -19,12 +19,22 @@ from bokehbowl.web import router as web_router
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
-DEFAULT_FAVICON = STATIC_DIR / "favicon.svg"
 INSTANCE_DIR = Path("instance")
 INSTANCE_TEMPLATES_DIR = INSTANCE_DIR / "templates"
-INSTANCE_FAVICON = INSTANCE_DIR / "favicon.svg"
 
 MAX_BODY_BYTES = 64 * 1024
+
+
+class InstanceStaticFiles(StaticFiles):
+    """Static files resolved from instance/static first, then bokehbowl/static."""
+
+    def __init__(self) -> None:
+        super().__init__(directory=STATIC_DIR)
+        self.all_directories.insert(0, INSTANCE_DIR / "static")
+
+    def has(self, path: str) -> bool:
+        """Whether the path resolves to a file in either directory."""
+        return self.lookup_path(path)[1] is not None
 
 
 def csrf_context(request: Request) -> dict[str, str]:
@@ -38,6 +48,7 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
     app.state.engine = engine
     app.state.mailer = mailer
     app.state.admin_login_throttle = LoginThrottle()
+    static = InstanceStaticFiles()
     templates = Jinja2Templates(
         directory=[INSTANCE_TEMPLATES_DIR, TEMPLATES_DIR],
         context_processors=[csrf_context],
@@ -46,16 +57,15 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
         operator_name=config.operator_name,
         operator_email=config.operator_email,
         app_commit=config.commit,
+        has_backdrop=static.has("background.webp"),
     )
     app.state.templates = templates
 
-    favicon = INSTANCE_FAVICON if INSTANCE_FAVICON.is_file() else DEFAULT_FAVICON
-
     @app.get("/favicon.ico")
-    def favicon_file() -> FileResponse:
-        return FileResponse(favicon)
+    def favicon_file() -> RedirectResponse:
+        return RedirectResponse("/static/favicon.svg")
 
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", static, name="static")
 
     app.add_middleware(
         SessionMiddleware,

@@ -35,8 +35,11 @@ body.photo-theme::before {
   z-index: -1;
   inset: 0;
   content: "";
-  background: #3f3f3d url("/static/background.webp") center / cover no-repeat;
+  background: var(--backdrop, none) center / cover no-repeat,
+    linear-gradient(160deg, #6b82a6 0%, #8ba3c0 34%, #d2a38c 62%, #8e8ea0 100%) #3f3f3d;
 }
+
+body.backdrop { --backdrop: url("/static/background.webp"); }
 
 a { color: inherit; }
 
