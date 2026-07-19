@@ -53,6 +53,12 @@ Compose binds the app to `127.0.0.1:8000`. Put an HTTPS reverse proxy or Cloudfl
 Tunnel in front of it. The container applies Alembic migrations at startup. SQLite
 data lives in `./data/`; copy that directory as part of your backup routine.
 
+Uvicorn runs with `--proxy-headers` and takes the client IP and scheme from
+`X-Forwarded-*`. `FORWARDED_ALLOW_IPS` names the proxy hops trusted to set those
+headers (default: loopback); the compose file sets it to the Docker network ranges.
+On other hosting, set it to the address the platform's proxy connects from. The
+client IP feeds the per-IP throttle on admin login.
+
 For a Cloudflare proxy, use Full (strict) TLS with an origin certificate, or use a
 Cloudflare Tunnel. A rate-limiting rule for `POST /signup`, `POST /login`, and
 `POST /admin/login` adds edge protection for public instances.

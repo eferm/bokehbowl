@@ -4,6 +4,9 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     env_file: .env
+    environment:
+      # Docker network gateways: the hop between the host's proxy and the app.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-172.16.0.0/12,192.168.0.0/16}
     volumes:
       - ./data:/app/data
       - ./instance:/app/instance
