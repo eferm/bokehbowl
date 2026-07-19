@@ -1,5 +1,5 @@
-{% macro mailing_address_fields(recipient=None) %}
-<fieldset class="form-grid">
+{% macro mailing_address_fields(recipient=None, locked=false) %}
+<fieldset class="form-grid"{% if locked %} disabled{% endif %}>
   <legend class="visually-hidden">Your mailing address</legend>
   <label class="form-label">Full Name <input class="form-control" name="name"{% if recipient %} value="{{ recipient.name }}"{% endif %} required autocomplete="name"></label>
   {% if not recipient %}

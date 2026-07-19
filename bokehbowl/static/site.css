@@ -25,9 +25,9 @@ body.photo-theme {
   --ink: #fff;
   --rule: rgb(255 255 255 / 62%);
   --muted: rgb(255 255 255 / 72%);
-  --button-background: #fff;
+  --button-background: rgb(255 255 255 / 85%);
   --button-foreground: #565650;
-  --button-hover: rgb(255 255 255 / 82%);
+  --button-hover: #fff;
 }
 
 body.photo-theme::before {
@@ -147,8 +147,9 @@ a { color: inherit; }
 .site-footer a { text-underline-offset: .18em; }
 
 .site-footer code {
-  color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .85em;
+  opacity: .5;
 }
 
 .home-layout {
@@ -289,9 +290,14 @@ a { color: inherit; }
 
 .form-control::placeholder { color: var(--muted); }
 
+.form-grid:disabled .form-control {
+  opacity: .5;
+}
+
 .form-control--inline { width: min(100%, 20rem); }
 
-.form-stack > button { justify-self: start; }
+.form-stack > button,
+.form-stack > .button-link { justify-self: start; }
 
 .signup {
   padding-top: 1rem;
@@ -306,7 +312,8 @@ a { color: inherit; }
   line-height: 1;
 }
 
-button {
+button,
+.button-link {
   min-height: 2.9rem;
   padding: .7rem 1rem;
   border: 0;
@@ -324,12 +331,20 @@ button {
 
 .home .signup button { margin-top: .35rem; }
 
-button:hover { background: var(--button-hover); }
+button:hover,
+.button-link:hover { background: var(--button-hover); }
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
 
 .site-header a:focus-visible,
 .site-footer a:focus-visible,
 .form-control:focus-visible,
-button:focus-visible {
+button:focus-visible,
+.button-link:focus-visible {
   outline: 3px solid var(--ink);
   outline-offset: 3px;
 }

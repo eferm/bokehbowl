@@ -269,6 +269,7 @@ def account(request: Request, templates: Templates, recipient: CurrentRecipient)
             "recipient": recipient,
             "created": request.query_params.get("created") == "1",
             "saved": "saved" in request.query_params,
+            "editing": "edit" in request.query_params,
         },
     )
 

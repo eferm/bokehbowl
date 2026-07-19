@@ -82,6 +82,16 @@ def test_wrong_code_rejected(client, mailer):
     assert client.get("/account", follow_redirects=False).status_code == 303
 
 
+def test_account_fields_locked_until_edit(client, mailer):
+    sign_up_and_verify(client, mailer)
+    locked = client.get("/account").text
+    assert 'class="form-grid" disabled' in locked
+    assert 'href="/account?edit=1"' in locked
+    editing = client.get("/account?edit=1").text
+    assert 'class="form-grid" disabled' not in editing
+    assert "Save" in editing
+
+
 def test_account_update(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = csrf_from(client.get("/account").text)
