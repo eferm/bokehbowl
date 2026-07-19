@@ -69,14 +69,6 @@ docker compose up -d --build
 
 Back up `data/`, `.env`, and `instance/` before updates.
 
-## Deploy on Cloudflare
-
-Experimental support for Cloudflare Workers + D1 (experimental)
-
-The Workers entrypoint is experimental. `worker.py` describes the required D1
-database setup, bindings, secrets, and deployment command; `wrangler.toml` supplies
-the Worker configuration.
-
 ## Usage Manual
 
 ### Create a mailing

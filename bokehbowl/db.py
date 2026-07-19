@@ -1,4 +1,4 @@
-"""Database models. SQLite dialect only, so the schema stays portable to D1."""
+"""Database models. SQLite dialect only."""
 
 from datetime import UTC, datetime
 from uuid6 import uuid7
