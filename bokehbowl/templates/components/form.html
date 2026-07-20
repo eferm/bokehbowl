@@ -10,6 +10,6 @@
   <label class="form-label">City <input class="form-control" name="city"{% if recipient %} value="{{ recipient.city }}"{% endif %} required autocomplete="address-level2"></label>
   <label class="form-label">State / Province <input class="form-control" name="region"{% if recipient %} value="{{ recipient.region or '' }}"{% endif %} autocomplete="address-level1" placeholder="If applicable"></label>
   <label class="form-label">Postal Code <input class="form-control" name="postal_code"{% if recipient %} value="{{ recipient.postal_code }}"{% endif %} required autocomplete="postal-code"></label>
-  <label class="form-label">Country <input class="form-control" name="country"{% if recipient %} value="{{ recipient.country }}"{% endif %} required autocomplete="country-name"></label>
+  <label class="form-label">Country <input class="form-control" name="country"{% if recipient %} value="{{ recipient.country }}"{% endif %} required autocomplete="country-name" placeholder="I mail worldwide"></label>
 </fieldset>
 {% endmacro %}
