@@ -35,7 +35,7 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="site-footer">
-    <span>Photo prints, mailed occasionally</span>
+    <span>© {{ current_year }} {{ operator_name }}</span>
     <span>Powered by <a href="https://github.com/eferm/bokehbowl" target="_blank" rel="noopener noreferrer">bokehbowl</a>{% if app_commit %} <code>{{ app_commit[:7] }}</code>{% endif %}</span>
     <span><a href="/privacy">Privacy</a></span>
   </footer>

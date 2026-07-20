@@ -1,5 +1,6 @@
 """App factory: wires config, database engine, and mailer into the FastAPI app."""
 
+from datetime import date
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -38,9 +39,9 @@ class InstanceStaticFiles(StaticFiles):
         return self.lookup_path(path)[1] is not None
 
 
-def csrf_context(request: Request) -> dict[str, str]:
-    """Expose the request's CSRF token to every rendered template."""
-    return {"csrf": csrf_token(request)}
+def template_context(request: Request) -> dict[str, str | int]:
+    """Expose request-specific values to every rendered template."""
+    return {"csrf": csrf_token(request), "current_year": date.today().year}
 
 
 def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
@@ -52,7 +53,7 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
     static = InstanceStaticFiles()
     templates = Jinja2Templates(
         directory=[INSTANCE_TEMPLATES_DIR, TEMPLATES_DIR],
-        context_processors=[csrf_context],
+        context_processors=[template_context],
     )
     templates.env.globals.update(
         operator_name=config.operator_name,

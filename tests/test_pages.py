@@ -1,9 +1,12 @@
+from datetime import date
+
+
 def test_home_page_uses_gallery_design(client):
     page = client.get("/").text
     assert 'class="photo-theme home"' in page
     assert "Photographs are better on paper." in page
     assert "<title>Bokehbowl: Photo Prints, Mailed Occasionally</title>" in page
-    assert "Photo prints, mailed occasionally" in page
+    assert f"© {date.today().year} Testy Operator" in page
 
 
 def test_site_stylesheet_served(client):
