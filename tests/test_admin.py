@@ -101,6 +101,7 @@ def test_recipients_table_shows_db_columns(client, mailer):
     sign_up_and_verify(client, mailer)
     admin_login(client)
     page = client.get("/admin?table=recipients")
+    assert "<h1>Admin</h1>" in page.text
     assert "Ada Lovelace" in page.text
     assert "ada@example.com" in page.text
     for column in ["email", "verified_at", "unsubscribed_at", "created_at"]:
@@ -222,6 +223,8 @@ def test_mailing_workflow(client, mailer):
 
     detail = client.get(detail_url).text
     assert 'class="admin"' in detail
+    assert "<h1>sailboat postcard</h1>" in detail
+    assert "<h2>To send (1)</h2>" in detail
     assert "To send (1)" in detail
     assert "Ada Lovelace" in detail
 

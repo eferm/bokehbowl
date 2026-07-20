@@ -3,13 +3,13 @@
 {% block body_class %}admin{% endblock %}
 {% block content %}
 <p><a href="/admin?table=mailings">&larr; all mailings</a></p>
-<h2>{{ mailing.title }}</h2>
+<h1>{{ mailing.title }}</h1>
 <p>Created {{ mailing.created_at.date() }}.</p>
 
-<h3>To send ({{ pending | length }})</h3>
+<h2>To send ({{ pending | length }})</h2>
 <p><a href="/admin/mailings/{{ mailing.id }}/labels.csv">Export this list as CSV</a></p>
 <div class="table-scroll">
-<table border="1" cellpadding="6">
+<table>
   <thead>
     <tr><th>Name</th><th>Address</th><th>Email</th><th></th></tr>
   </thead>
@@ -41,7 +41,7 @@
 <details>
   <summary>Signed up after this mailing ({{ late | length }}) — send by choice</summary>
   <div class="table-scroll">
-<table border="1" cellpadding="6">
+<table>
     <thead>
       <tr><th>Name</th><th>Address</th><th>Signed up</th><th></th></tr>
     </thead>
@@ -69,9 +69,9 @@
 </details>
 {% endif %}
 
-<h3>Sent ({{ mailpieces | length }})</h3>
+<h2>Sent ({{ mailpieces | length }})</h2>
 <div class="table-scroll">
-<table border="1" cellpadding="6">
+<table>
   <thead>
     <tr><th>Name</th><th>Sent</th><th>Address on envelope</th><th></th></tr>
   </thead>
