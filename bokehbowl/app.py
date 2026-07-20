@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Engine
 from starlette.middleware.sessions import SessionMiddleware
@@ -65,6 +65,10 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
     @app.get("/favicon.ico")
     def favicon_file() -> RedirectResponse:
         return RedirectResponse("/static/favicon.svg")
+
+    @app.get("/robots.txt")
+    def robots_file() -> FileResponse:
+        return FileResponse(STATIC_DIR / "robots.txt", media_type="text/plain")
 
     app.mount("/static", static, name="static")
 

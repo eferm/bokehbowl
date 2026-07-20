@@ -19,6 +19,14 @@ def test_favicon_served(client):
     assert 'href="/static/favicon.svg"' in client.get("/").text
 
 
+def test_robots_txt_served_at_site_root(client):
+    response = client.get("/robots.txt")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert "User-agent: *" in response.text
+    assert "Disallow: /admin" in response.text
+
+
 def test_instance_backdrop_rendered(make_client, monkeypatch, tmp_path):
     image = tmp_path / "instance" / "static" / "background.webp"
     image.parent.mkdir(parents=True)
