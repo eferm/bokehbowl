@@ -249,8 +249,22 @@ a {
   text-wrap: pretty;
 }
 
+.prose ul {
+  max-width: 62ch;
+  margin: 0 0 1.25rem;
+  padding-left: 1.2rem;
+  font-size: 1.02rem;
+  line-height: 1.6;
+}
+
 .prose a {
   text-underline-offset: 0.18em;
+}
+
+.prose--justify p,
+.prose--justify li {
+  text-align: justify;
+  hyphens: auto;
 }
 
 .form-page {

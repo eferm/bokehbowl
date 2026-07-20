@@ -1,37 +1,36 @@
 {% extends "base.html" %}
-{% block title %}Privacy — Bokehbowl{% endblock %}
+{% block title %}Privacy | Bokehbowl{% endblock %}
 {% block content %}
-<article class="prose">
+<article class="prose prose--justify">
 <h1>Privacy</h1>
-<p>This instance is operated by <strong>{{ operator_name }}</strong>, who is
-responsible for the data collected here.</p>
+<p>This service is run by <strong>{{ operator_name }}</strong>, who is responsible for
+the information collected here. We mail pictures to people who ask for one, and collect
+only what we need to do that.</p>
 
 <h2>What we collect, and why</h2>
-<p>Your name, email address, and postal address, solely so the operator can mail you
-the pictures you signed up for. Your email is used to verify your signup and to send
-sign-in codes. That's it: no marketing, no newsletters.</p>
+<p>Your name and postal address, so we can mail you a picture, and your email address,
+which we use to verify your signup and send your sign-in codes. Nothing is collected
+for marketing, newsletters, or profiling.</p>
 
 <h2>What we don't do</h2>
-<p>Your data is never sold or shared with anyone. There are no analytics, no trackers,
-and no third-party scripts on this site. The only cookie is the session cookie that
-keeps you signed in, which is why there's no cookie banner.</p>
+<p>Your data is never sold, rented, or shared for anyone else's purposes. There are no
+analytics, no trackers, and no third-party scripts on this site. The only cookie is the
+one that keeps you signed in, which is why there is no cookie banner.</p>
 
-<h2>Where it lives</h2>
-<p>In this instance's own database, controlled by the operator, on whatever hosting
-infrastructure the operator has chosen: a cloud platform or a server of their own.
-The hosting provider stores data on the operator's behalf; it isn't shared with them
-beyond that. When you update your address, previous versions are kept so past
-mailings stay accountable.</p>
-{# Running your own instance? This page is a generic default — the project can't
-know whether you deploy to Railway, Fly.io, Cloudflare, or a box in your closet.
-Replace it with the specifics of your setup by dropping a privacy.html
-into instance/templates/. #}
+<h2>Where it lives, and who handles it</h2>
+<p>Your details sit in this instance's own database, on hosting the operator runs or
+rents, and your sign-in codes are delivered through an email service. These providers
+process your data only to run this service, never for their own purposes. When you
+change your address, we keep the earlier versions so past mailings stay accountable.</p>
+{# Operators: this generic default is written to be true of any deployment. For the
+specifics of your own hosting, email, and jurisdiction, drop a privacy.html into
+instance/templates/ to replace it. #}
 
 <h2>Your choices</h2>
-<p>You can view and edit your details, or unregister, any time from your
+<p>You can view and edit your details, or unregister, at any time from your
 <a href="/account">account page</a>. Unregistering stops all future mailings
-immediately. To have your data fully deleted, contact the operator{% if operator_email %}
-at <a href="mailto:{{ operator_email }}">{{ operator_email }}</a>{% endif %} and it
-will be removed.</p>
+immediately. To have your data deleted entirely, contact the operator{% if operator_email %}
+at <a href="mailto:{{ operator_email }}">{{ operator_email }}</a>{% endif %} and we will
+remove it.</p>
 </article>
 {% endblock %}

@@ -60,7 +60,7 @@ def test_security_headers(client):
 def test_privacy_page(client):
     page = client.get("/privacy")
     assert page.status_code == 200
-    assert 'class="prose"' in page.text
+    assert 'class="prose' in page.text
     assert "<h1>Privacy</h1>" in page.text
     assert "<h2>What we collect, and why</h2>" in page.text
     assert "Testy Operator" in page.text
