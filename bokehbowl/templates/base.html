@@ -6,7 +6,7 @@
   <meta name="format-detection" content="telephone=no">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/site.css{% if app_commit %}?v={{ app_commit[:7] }}{% endif %}">
-  <title>{% block title %}Bokehbowl{% endblock %}</title>
+  <title>{% block title %}Bokehbowl: Photo Prints, Mailed Occasionally{% endblock %}</title>
   <meta name="description" content="Bokehbowl mails free printed photographs to people who ask for one. Leave your address and an occasional picture shows up in your mailbox.">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Bokehbowl">
@@ -35,7 +35,7 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="site-footer">
-    <span>Free pictures, mailed occasionally.</span>
+    <span>Photo prints, mailed occasionally</span>
     <span>Powered by <a href="https://github.com/eferm/bokehbowl" target="_blank" rel="noopener noreferrer">bokehbowl</a>{% if app_commit %} <code>{{ app_commit[:7] }}</code>{% endif %}</span>
     <span><a href="/privacy">Privacy</a></span>
   </footer>
