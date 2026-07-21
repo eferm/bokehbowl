@@ -7,10 +7,10 @@
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/site.css{% if app_commit %}?v={{ app_commit[:7] }}{% endif %}">
   <title>{% block title %}Bokehbowl: Photo Prints, Mailed Occasionally{% endblock %}</title>
-  <meta name="description" content="Bokehbowl mails free printed photographs to people who ask for one. Leave your address and an occasional picture shows up in your mailbox.">
+  <meta name="description" content="{% block description %}Bokehbowl mails free printed photographs to people who ask for one. Leave your address and an occasional picture shows up in your mailbox.{% endblock %}">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Bokehbowl">
-  <meta property="og:description" content="Photo prints, mailed occasionally.">
+  <meta property="og:title" content="{{ self.title() }}">
+  <meta property="og:description" content="{{ self.description() }}">
   <meta property="og:url" content="{{ request.url }}">
   <meta property="og:image" content="{{ request.base_url }}static/og.jpg">
   <meta property="og:image:width" content="1200">
