@@ -6,12 +6,12 @@
   <section class="home-intro" aria-labelledby="home-heading">
     <p class="eyebrow">Photographs by post</p>
     <h1 id="home-heading">Photographs are better on paper.</h1>
-    <p>I take photos, print them, and send them to people who would like one.
+    <p>I take photos, make prints, and send them to people who would like one.
     It is free and deliberately slow.</p>
   </section>
 
   <section class="signup" aria-labelledby="signup-heading">
-    <h2 id="signup-heading">Get the next mailing</h2>
+    <h2 id="signup-heading">Get the next print</h2>
     {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
     <form class="form-stack" method="post" action="/signup">
       <input type="hidden" name="csrf" value="{{ csrf }}">
