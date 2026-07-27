@@ -9,7 +9,7 @@
   {% elif saved %}
   <p class="form-notice" role="status">Saved.</p>
   {% endif %}
-  {% if recipient.unsubscribed_at %}
+  {% if user.unsubscribed_at %}
   <p>You're currently <strong>unregistered</strong> — no pictures will be sent.</p>
   <form class="form-stack" method="post" action="/account/reregister">
     <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -18,15 +18,15 @@
   {% endif %}
   <form class="form-stack" method="post" action="/account">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <p>Signed in as <strong>{{ recipient.email }}</strong></p>
-    {{ mailing_address_fields(recipient, locked=not editing) }}
+    <p>Signed in as <strong>{{ user.email }}</strong></p>
+    {{ mailing_address_fields(address, locked=not editing) }}
     {% if editing %}
     <button type="submit">Save</button>
     {% else %}
     <a class="button-link" href="/account?edit=1">Edit</a>
     {% endif %}
   </form>
-  {% if not recipient.unsubscribed_at %}
+  {% if not user.unsubscribed_at %}
   <form class="form-stack" method="post" action="/account/unregister">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button type="submit">Unregister (stop sending me pictures)</button>

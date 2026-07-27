@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}{{ edition.title }} - Bokehbowl{% endblock %}
+{% block body_class %}admin{% endblock %}
+{% block content %}
+<p><a href="/admin?table=editions">&larr; all editions</a></p>
+<h1>{{ edition.title }}</h1>
+<p>Created {{ edition.created_at.date() }}. Status: <strong>{{ edition.status }}</strong>.</p>
+{% if edition.status == "open" %}
+<form class="form-stack form-stack--inline" method="post" action="/admin/editions/{{ edition.id }}/close">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button type="submit">Close edition (stop sending)</button>
+</form>
+{% else %}
+<form class="form-stack form-stack--inline" method="post" action="/admin/editions/{{ edition.id }}/reopen">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button type="submit">Reopen edition</button>
+</form>
+{% endif %}
+
+<h2>To send ({{ pending | length }})</h2>
+<p><a href="/admin/editions/{{ edition.id }}/labels.csv">Export this list as CSV</a></p>
+<div class="table-scroll">
+<table>
+  <thead>
+    <tr><th>Name</th><th>Address</th><th>Email</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for user, address in pending %}
+    <tr>
+      <td>{{ address.addressee }}</td>
+      <td>
+        {{ address.address_line1 }}{% if address.address_line2 %}<br>{{ address.address_line2 }}{% endif %}<br>
+        {{ address.city }}{% if address.region %}, {{ address.region }}{% endif %} {{ address.postal_code }}<br>
+        {{ address.country }}
+      </td>
+      <td>{{ user.email }}</td>
+      <td>
+        <form method="post" action="/admin/editions/{{ edition.id }}/send/{{ user.id }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit">Mark sent</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">Nobody left to send to.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if late %}
+<details>
+  <summary>Signed up after this edition ({{ late | length }}) — send by choice</summary>
+  <div class="table-scroll">
+<table>
+    <thead>
+      <tr><th>Name</th><th>Address</th><th>Signed up</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for user, address in late %}
+      <tr>
+        <td>{{ address.addressee }}</td>
+        <td>
+          {{ address.address_line1 }}{% if address.address_line2 %}<br>{{ address.address_line2 }}{% endif %}<br>
+          {{ address.city }}{% if address.region %}, {{ address.region }}{% endif %} {{ address.postal_code }}<br>
+          {{ address.country }}
+        </td>
+        <td>{{ user.created_at.date() }}</td>
+        <td>
+          <form method="post" action="/admin/editions/{{ edition.id }}/send/{{ user.id }}">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit">Mark sent</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+</details>
+{% endif %}
+
+<h2>Sent ({{ mailpieces | length }})</h2>
+<div class="table-scroll">
+<table>
+  <thead>
+    <tr><th>Name</th><th>Sent</th><th>Address on envelope</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for s in mailpieces %}
+    <tr>
+      <td>{{ s.address.addressee }}</td>
+      <td>{{ s.sent_at.date() }}</td>
+      <td>
+        {{ s.address.address_line1 }},
+        {{ s.address.city }} {{ s.address.postal_code }},
+        {{ s.address.country }}
+      </td>
+      <td>
+        <form method="post" action="/admin/mailpieces/{{ s.id }}/delete">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit">Undo</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">None sent yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

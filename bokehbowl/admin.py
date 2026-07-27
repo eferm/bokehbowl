@@ -13,14 +13,18 @@ from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from bokehbowl.auth import require_csrf
 from bokehbowl.db import (
+    Address,
     AdminSession,
     Base,
-    Mailing,
+    Edition,
+    EditionStatus,
     Mailpiece,
-    Recipient,
-    RecipientSession,
-    RecipientVersion,
-    latest_version,
+    User,
+    UserSession,
+    UserStatus,
+    mailable_address,
+    resubscribe,
+    unsubscribe,
     utcnow,
 )
 from bokehbowl.web import Db, Templates
@@ -38,9 +42,9 @@ ADMIN_LOGIN_WINDOW = timedelta(minutes=15)
 ADMIN_SESSION_TTL = timedelta(days=14)
 
 TABLES: dict[str, tuple[type[Base], InstrumentedAttribute]] = {
-    "recipients": (Recipient, Recipient.created_at),
-    "recipient_versions": (RecipientVersion, RecipientVersion.valid_from),
-    "mailings": (Mailing, Mailing.created_at),
+    "users": (User, User.created_at),
+    "addresses": (Address, Address.created_at),
+    "editions": (Edition, Edition.created_at),
     "mailpieces": (Mailpiece, Mailpiece.sent_at),
 }
 
@@ -113,18 +117,18 @@ def require_admin(request: Request, db: Db) -> None:
 AdminOnly = Annotated[None, Depends(require_admin)]
 
 
-def require_recipient(_: AdminOnly, db: Db, recipient_id: str) -> Recipient:
-    recipient = db.get(Recipient, recipient_id)
-    if recipient is None:
+def require_user(_: AdminOnly, db: Db, user_id: str) -> User:
+    user = db.get(User, user_id)
+    if user is None:
         raise HTTPException(status_code=404)
-    return recipient
+    return user
 
 
-def require_mailing(_: AdminOnly, db: Db, mailing_id: str) -> Mailing:
-    mailing = db.get(Mailing, mailing_id)
-    if mailing is None:
+def require_edition(_: AdminOnly, db: Db, edition_id: str) -> Edition:
+    edition = db.get(Edition, edition_id)
+    if edition is None:
         raise HTTPException(status_code=404)
-    return mailing
+    return edition
 
 
 def require_mailpiece(_: AdminOnly, db: Db, mailpiece_id: str) -> Mailpiece:
@@ -134,8 +138,8 @@ def require_mailpiece(_: AdminOnly, db: Db, mailpiece_id: str) -> Mailpiece:
     return mailpiece
 
 
-RecipientById = Annotated[Recipient, Depends(require_recipient)]
-MailingById = Annotated[Mailing, Depends(require_mailing)]
+UserById = Annotated[User, Depends(require_user)]
+EditionById = Annotated[Edition, Depends(require_edition)]
 MailpieceById = Annotated[Mailpiece, Depends(require_mailpiece)]
 
 
@@ -218,7 +222,7 @@ def dashboard(
     db: Db,
     templates: Templates,
     _: AdminOnly,
-    table: str = "recipients",
+    table: str = "users",
 ):
     model, timestamp = require_table(table)
     counts = {
@@ -237,145 +241,159 @@ def dashboard(
     )
 
 
-@router.post("/recipients/{recipient_id}/unregister")
-def unregister(db: Db, recipient: RecipientById):
-    if recipient.unsubscribed_at is None:
-        recipient.unsubscribed_at = utcnow()
-        db.add(recipient)
-    db.execute(
-        delete(RecipientSession).where(RecipientSession.recipient_id == recipient.id)
-    )
+@router.post("/users/{user_id}/unregister")
+def unregister(db: Db, user: UserById):
+    if user.unsubscribed_at is None:
+        unsubscribe(user, utcnow())
+        db.add(user)
+    db.execute(delete(UserSession).where(UserSession.user_id == user.id))
     return RedirectResponse("/admin", status_code=303)
 
 
-@router.post("/recipients/{recipient_id}/reregister")
-def reregister(db: Db, recipient: RecipientById):
-    recipient.unsubscribed_at = None
-    db.add(recipient)
+@router.post("/users/{user_id}/reregister")
+def reregister(db: Db, user: UserById):
+    resubscribe(user)
+    db.add(user)
     return RedirectResponse("/admin", status_code=303)
 
 
 @router.get("/export.csv")
-def export(db: Db, _: AdminOnly, table: str = "recipients"):
+def export(db: Db, _: AdminOnly, table: str = "users"):
     model, timestamp = require_table(table)
     return csv_response(
         f"bokehbowl-{table}.csv", columns_of(model), rows_of(db, model, timestamp)
     )
 
 
-def eligible_recipients(db: Session) -> list[Recipient]:
-    """Everyone a mailing may be sent to: verified and not unregistered."""
+def eligible_users(db: Session) -> list[User]:
+    """Everyone an edition may be sent to: an active subscription."""
     return list(
         db.scalars(
-            select(Recipient)
-            .where(
-                Recipient.verified_at.is_not(None),
-                Recipient.unsubscribed_at.is_(None),
-            )
-            .order_by(Recipient.created_at)
+            select(User)
+            .where(User.status == UserStatus.ACTIVE)
+            .order_by(User.created_at)
         )
     )
 
 
-def mailpieces_of(db: Session, mailing_id: str) -> list[Mailpiece]:
+def mailpieces_of(db: Session, edition_id: str) -> list[Mailpiece]:
     return list(
         db.scalars(
             select(Mailpiece)
-            .where(Mailpiece.mailing_id == mailing_id)
+            .where(Mailpiece.edition_id == edition_id)
             .order_by(Mailpiece.sent_at.desc())
         )
     )
 
 
-def unsent_recipients(db: Session, mailing_id: str) -> list[Recipient]:
-    sent_ids = {mailpiece.recipient_id for mailpiece in mailpieces_of(db, mailing_id)}
-    return [r for r in eligible_recipients(db) if r.id not in sent_ids]
+def unsent_users(db: Session, edition_id: str) -> list[User]:
+    sent_ids = {mailpiece.user_id for mailpiece in mailpieces_of(db, edition_id)}
+    return [u for u in eligible_users(db) if u.id not in sent_ids]
 
 
-def pending_recipients(db: Session, mailing: Mailing) -> list[Recipient]:
-    """The default mailing list: unsent recipients who existed when the mailing did."""
+def pending_users(db: Session, edition: Edition) -> list[User]:
+    """The default mailing list: unsent users who existed when the edition did."""
     return [
-        r
-        for r in unsent_recipients(db, mailing.id)
-        if r.created_at <= mailing.created_at
+        u for u in unsent_users(db, edition.id) if u.created_at <= edition.created_at
     ]
 
 
-def late_recipients(db: Session, mailing: Mailing) -> list[Recipient]:
-    """Unsent recipients who signed up after the mailing was created — sendable
-    only by explicit choice."""
+def late_users(db: Session, edition: Edition) -> list[User]:
+    """Unsent users who signed up after the edition was created — sendable only
+    by explicit choice."""
     return [
-        r
-        for r in unsent_recipients(db, mailing.id)
-        if r.created_at > mailing.created_at
+        u for u in unsent_users(db, edition.id) if u.created_at > edition.created_at
     ]
 
 
-@router.post("/mailings")
-def create_mailing(
+def mailable_pairs(db: Session, users: list[User]) -> list[tuple[User, Address]]:
+    """Each user paired with the address an envelope to them would use."""
+    pairs = []
+    for user in users:
+        address = mailable_address(db, user.id)
+        assert address is not None  # signup always records an address
+        pairs.append((user, address))
+    return pairs
+
+
+@router.post("/editions")
+def create_edition(
     db: Db,
     _: AdminOnly,
     title: Annotated[str, Form()],
 ):
-    mailing = Mailing(title=title.strip())
-    db.add(mailing)
+    edition = Edition(title=title.strip())
+    db.add(edition)
     db.flush()
-    return RedirectResponse(f"/admin/mailings/{mailing.id}", status_code=303)
+    return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)
 
 
-@router.get("/mailings/{mailing_id}")
-def mailing_detail(
-    request: Request, db: Db, templates: Templates, mailing: MailingById
+@router.get("/editions/{edition_id}")
+def edition_detail(
+    request: Request, db: Db, templates: Templates, edition: EditionById
 ):
     return templates.TemplateResponse(
         request,
-        "mailing.html",
+        "edition.html",
         {
-            "mailing": mailing,
-            "pending": pending_recipients(db, mailing),
-            "late": late_recipients(db, mailing),
-            "mailpieces": mailpieces_of(db, mailing.id),
+            "edition": edition,
+            "pending": mailable_pairs(db, pending_users(db, edition)),
+            "late": mailable_pairs(db, late_users(db, edition)),
+            "mailpieces": mailpieces_of(db, edition.id),
         },
     )
 
 
-@router.post("/mailings/{mailing_id}/send/{recipient_id}")
+@router.post("/editions/{edition_id}/close")
+def close_edition(db: Db, edition: EditionById):
+    edition.status = EditionStatus.CLOSED
+    db.add(edition)
+    return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)
+
+
+@router.post("/editions/{edition_id}/reopen")
+def reopen_edition(db: Db, edition: EditionById):
+    edition.status = EditionStatus.OPEN
+    db.add(edition)
+    return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)
+
+
+@router.post("/editions/{edition_id}/send/{user_id}")
 def mark_sent(
     db: Db,
-    mailing: MailingById,
-    recipient: RecipientById,
+    edition: EditionById,
+    user: UserById,
 ):
-    if recipient.verified_at is None or recipient.unsubscribed_at is not None:
+    if edition.status != EditionStatus.OPEN or user.status != UserStatus.ACTIVE:
         raise HTTPException(status_code=409)
-    version = latest_version(db, recipient.id)
-    if version is None:
-        raise HTTPException(status_code=404)
     already_sent = db.scalar(
         select(Mailpiece).where(
-            Mailpiece.mailing_id == mailing.id, Mailpiece.recipient_id == recipient.id
+            Mailpiece.edition_id == edition.id, Mailpiece.user_id == user.id
         )
     )
     if already_sent is None:
+        address = mailable_address(db, user.id)
+        assert address is not None  # signup always records an address
         db.add(
             Mailpiece(
-                mailing_id=mailing.id,
-                recipient_id=recipient.id,
-                recipient_version_id=version.id,
+                edition_id=edition.id,
+                user_id=user.id,
+                address_id=address.id,
                 sent_at=utcnow(),
             )
         )
-    return RedirectResponse(f"/admin/mailings/{mailing.id}", status_code=303)
+    return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)
 
 
 @router.post("/mailpieces/{mailpiece_id}/delete")
 def undo_mailpiece(db: Db, mailpiece: MailpieceById):
-    mailing_id = mailpiece.mailing_id
+    edition_id = mailpiece.edition_id
     db.delete(mailpiece)
-    return RedirectResponse(f"/admin/mailings/{mailing_id}", status_code=303)
+    return RedirectResponse(f"/admin/editions/{edition_id}", status_code=303)
 
 
-@router.get("/mailings/{mailing_id}/labels.csv")
-def export_labels(db: Db, mailing: MailingById):
+@router.get("/editions/{edition_id}/labels.csv")
+def export_labels(db: Db, edition: EditionById):
     columns = [
         "name",
         "address_line1",
@@ -385,8 +403,9 @@ def export_labels(db: Db, mailing: MailingById):
         "postal_code",
         "country",
     ]
+    fields = ["addressee"] + columns[1:]
     rows = [
-        [getattr(recipient, column) for column in columns]
-        for recipient in pending_recipients(db, mailing)
+        [getattr(address, field) for field in fields]
+        for _, address in mailable_pairs(db, pending_users(db, edition))
     ]
-    return csv_response(f"mailing-{mailing.id}-to-send.csv", columns, rows)
+    return csv_response(f"edition-{edition.id}-to-send.csv", columns, rows)

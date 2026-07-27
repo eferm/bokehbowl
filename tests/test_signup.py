@@ -8,7 +8,13 @@ from sqlalchemy.orm import Session
 
 from bokehbowl import auth, web
 from bokehbowl.config import load_config
-from bokehbowl.db import LoginCode, Recipient, RecipientSession, utcnow
+from bokehbowl.db import (
+    LoginCode,
+    User,
+    UserSession,
+    latest_manual_address,
+    utcnow,
+)
 from tests.conftest import SIGNUP_FORM, csrf_from, sign_up_and_verify
 
 
@@ -44,9 +50,9 @@ def test_session_cookie_carries_token(client, mailer):
     sign_up_and_verify(client, mailer)
     encoded = client.cookies["session"].split(".")[0]
     payload = json.loads(base64.b64decode(encoded + "=" * (-len(encoded) % 4)))
-    assert "recipient_id" not in payload
-    assert isinstance(payload["recipient_token"], str)
-    assert len(payload["recipient_token"]) == 43
+    assert "user_id" not in payload
+    assert isinstance(payload["user_token"], str)
+    assert len(payload["user_token"]) == 43
 
 
 def test_verified_signup_notifies_operator(client, mailer):
@@ -161,10 +167,10 @@ def test_logout_only_ends_current_device_session(client, mailer):
     csrf = csrf_from(client.get("/account").text)
 
     with Session(client.app.state.engine) as db:
-        current_session = db.scalars(select(RecipientSession)).one()
+        current_session = db.scalars(select(UserSession)).one()
         db.add(
-            RecipientSession(
-                recipient_id=current_session.recipient_id,
+            UserSession(
+                user_id=current_session.user_id,
                 token="another-device-session",
             )
         )
@@ -174,15 +180,15 @@ def test_logout_only_ends_current_device_session(client, mailer):
     assert response.status_code == 303
 
     with Session(client.app.state.engine) as db:
-        sessions = db.scalars(select(RecipientSession)).all()
+        sessions = db.scalars(select(UserSession)).all()
         assert [session.token for session in sessions] == ["another-device-session"]
 
 
-def test_verification_prunes_expired_recipient_sessions(client, mailer):
+def test_verification_prunes_expired_user_sessions(client, mailer):
     sign_up_and_verify(client, mailer)
     with Session(client.app.state.engine) as db:
-        session = db.scalars(select(RecipientSession)).one()
-        session.created_at = utcnow() - web.RECIPIENT_SESSION_TTL - timedelta(seconds=1)
+        session = db.scalars(select(UserSession)).one()
+        session.created_at = utcnow() - web.USER_SESSION_TTL - timedelta(seconds=1)
         db.commit()
 
     csrf = csrf_from(client.get("/").text)
@@ -193,7 +199,7 @@ def test_verification_prunes_expired_recipient_sessions(client, mailer):
     )
 
     with Session(client.app.state.engine) as db:
-        assert len(db.scalars(select(RecipientSession)).all()) == 1
+        assert len(db.scalars(select(UserSession)).all()) == 1
 
 
 def test_signup_state_survives_mailer_failure(client, mailer, monkeypatch):
@@ -205,7 +211,7 @@ def test_signup_state_survives_mailer_failure(client, mailer, monkeypatch):
     with pytest.raises(RuntimeError):
         client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
     with Session(client.app.state.engine) as db:
-        assert db.scalars(select(Recipient)).one()
+        assert db.scalars(select(User)).one()
         assert db.scalars(select(LoginCode)).one()
 
 
@@ -290,18 +296,19 @@ def test_unverified_signup_data_is_overwritten(client, mailer):
         },
     )
     with Session(client.app.state.engine) as db:
-        recipient = db.scalars(select(Recipient)).one()
-        assert recipient.name == "Grace Hopper"
-        assert recipient.address_line1 == "1 Navy Yard"
-        assert recipient.city == "Arlington"
+        user = db.scalars(select(User)).one()
+        address = latest_manual_address(db, user.id)
+        assert address.addressee == "Grace Hopper"
+        assert address.address_line1 == "1 Navy Yard"
+        assert address.city == "Arlington"
     client.post(
         "/verify",
         data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
     )
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf, "name": "Someone Else"})
     with Session(client.app.state.engine) as db:
-        recipient = db.scalars(select(Recipient)).one()
-        assert recipient.name == "Grace Hopper"
+        user = db.scalars(select(User)).one()
+        assert latest_manual_address(db, user.id).addressee == "Grace Hopper"
 
 
 def test_attempt_cap_blocks_correct_code(client, mailer):
@@ -341,4 +348,4 @@ def test_capped_signup_creates_no_row(client, mailer, monkeypatch):
     )
     assert response.status_code == 429
     with Session(client.app.state.engine) as db:
-        assert len(db.scalars(select(Recipient)).all()) == 1
+        assert len(db.scalars(select(User)).all()) == 1
