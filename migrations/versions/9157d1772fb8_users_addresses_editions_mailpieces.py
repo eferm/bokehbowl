@@ -16,7 +16,6 @@ Create Date: 2026-07-26 10:00:00.000000
 
 import sqlalchemy as sa
 from alembic import op
-from uuid6 import uuid7
 
 revision = "9157d1772fb8"
 down_revision = "5ea8adf60cba"
@@ -110,6 +109,14 @@ def _create_new_tables() -> None:
 
 def _create_old_tables() -> None:
     op.create_table(
+        "mailings",
+        sa.Column("id", sa.String(length=36), nullable=False),
+        sa.Column("title", sa.String(length=200), nullable=False),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+    )
+
+    op.create_table(
         "recipients",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("email", sa.String(length=254), nullable=False),
@@ -129,6 +136,15 @@ def _create_old_tables() -> None:
         batch_op.create_index(
             batch_op.f("ix_recipients_email"), ["email"], unique=True
         )
+
+    op.create_table(
+        "recipient_sessions",
+        sa.Column("token", sa.String(length=43), nullable=False),
+        sa.Column("recipient_id", sa.String(length=36), nullable=False),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(["recipient_id"], ["recipients.id"]),
+        sa.PrimaryKeyConstraint("token"),
+    )
 
     op.create_table(
         "recipient_versions",
@@ -152,23 +168,6 @@ def _create_old_tables() -> None:
             ["recipient_id"],
             unique=False,
         )
-
-    op.create_table(
-        "mailings",
-        sa.Column("id", sa.String(length=36), nullable=False),
-        sa.Column("title", sa.String(length=200), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.PrimaryKeyConstraint("id"),
-    )
-
-    op.create_table(
-        "recipient_sessions",
-        sa.Column("token", sa.String(length=43), nullable=False),
-        sa.Column("recipient_id", sa.String(length=36), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(["recipient_id"], ["recipients.id"]),
-        sa.PrimaryKeyConstraint("token"),
-    )
 
     op.create_table(
         "mailpieces",
@@ -230,7 +229,7 @@ def _read_old_rows(bind) -> dict[str, list[dict]]:
         fields = tuple(row[2:9])
         current = latest_of_user.get(row.recipient_id)
         if current is None or current[0] != fields:
-            current = (fields, str(uuid7()))
+            current = (fields, row.id)
             latest_of_user[row.recipient_id] = current
             addresses.append(
                 {
@@ -285,7 +284,6 @@ def _read_old_rows(bind) -> dict[str, list[dict]]:
 def _read_new_rows(bind) -> dict[str, list[dict]]:
     """The new schema's rows, mapped onto the old schema's shape."""
     versions: list[dict] = []
-    address_to_version: dict[str, str] = {}
     address_rows = bind.execute(
         sa.text(
             "SELECT a.id, a.user_id, u.email, a.addressee, a.address_line1,"
@@ -296,11 +294,9 @@ def _read_new_rows(bind) -> dict[str, list[dict]]:
         )
     )
     for a in address_rows:
-        version_id = str(uuid7())
-        address_to_version[a.id] = version_id
         versions.append(
             {
-                "id": version_id,
+                "id": a.id,
                 "recipient_id": a.user_id,
                 "email": a.email,
                 "name": a.addressee,
@@ -354,7 +350,7 @@ def _read_new_rows(bind) -> dict[str, list[dict]]:
             "id": m.id,
             "mailing_id": m.edition_id,
             "recipient_id": m.user_id,
-            "recipient_version_id": address_to_version[m.address_id],
+            "recipient_version_id": m.address_id,
             "sent_at": m.sent_at,
         }
         for m in bind.execute(
