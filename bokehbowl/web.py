@@ -28,7 +28,6 @@ from bokehbowl.auth import (
 from bokehbowl.db import (
     User,
     UserSession,
-    UserStatus,
     latest_manual_address,
     record_address,
     utcnow,
@@ -156,7 +155,7 @@ def signup(
         user = User(email=form.email, verified_at=None, unsubscribed_at=None)
         db.add(user)
         db.flush()
-    if user.status == UserStatus.PENDING:
+    if user.verified_at is None and user.unsubscribed_at is None:
         record_address(
             db,
             user.id,
@@ -235,9 +234,8 @@ def verify(
     user = db.scalar(select(User).where(User.email == form.email))
     if user is None:
         raise LoginRequired()
-    newly_verified = user.status == UserStatus.PENDING
-    if newly_verified:
-        user.status = UserStatus.ACTIVE
+    newly_registered = user.verified_at is None
+    if newly_registered:
         user.verified_at = now
         manual = latest_manual_address(db, user.id)
         background.add_task(
@@ -256,7 +254,7 @@ def verify(
     db.add(session)
     request.session["user_token"] = session.token
     db.commit()
-    destination = "/account?created=1" if newly_verified else "/account"
+    destination = "/account?created=1" if newly_registered else "/account"
     return RedirectResponse(destination, status_code=303)
 
 
@@ -298,7 +296,6 @@ def update_account(
 
 @router.post("/account/unsubscribe")
 def unsubscribe(request: Request, db: Db, user: CurrentUser):
-    user.status = UserStatus.UNSUBSCRIBED
     user.unsubscribed_at = utcnow()
     db.add(user)
     db.execute(delete(UserSession).where(UserSession.user_id == user.id))
@@ -308,7 +305,6 @@ def unsubscribe(request: Request, db: Db, user: CurrentUser):
 
 @router.post("/account/resubscribe")
 def resubscribe(request: Request, db: Db, user: CurrentUser):
-    user.status = UserStatus.ACTIVE
     user.unsubscribed_at = None
     db.add(user)
     return RedirectResponse("/account", status_code=303)

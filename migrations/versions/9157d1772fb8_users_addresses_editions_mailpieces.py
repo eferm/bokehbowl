@@ -1,9 +1,8 @@
 """users, addresses, editions; mailpieces repointed to addresses
 
-Recipients become users with an explicit subscription status. Recipient
-versions become append-only addresses; mailpieces point at the address row
-written on the envelope instead of a version snapshot. Mailings become
-editions.
+Recipients become users. Recipient versions become append-only addresses;
+mailpieces point at the address row written on the envelope instead of a
+version snapshot. Mailings become editions.
 
 Both directions read every row into memory first, swap the schema, then load
 the mapped rows back.
@@ -28,11 +27,6 @@ def _create_new_tables() -> None:
         "users",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("email", sa.String(length=254), nullable=False),
-        sa.Column(
-            "status",
-            sa.Enum("pending", "active", "unsubscribed", name="userstatus"),
-            nullable=False,
-        ),
         sa.Column("verified_at", sa.DateTime(), nullable=True),
         sa.Column("unsubscribed_at", sa.DateTime(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
@@ -197,13 +191,6 @@ def _read_old_rows(bind) -> dict[str, list[dict]]:
         {
             "id": r.id,
             "email": r.email,
-            "status": (
-                "pending"
-                if r.verified_at is None
-                else "unsubscribed"
-                if r.unsubscribed_at is not None
-                else "active"
-            ),
             "verified_at": r.verified_at,
             "unsubscribed_at": r.unsubscribed_at,
             "created_at": r.created_at,
@@ -339,11 +326,13 @@ def _read_new_rows(bind) -> dict[str, list[dict]]:
         {"id": m.id, "title": m.title, "created_at": m.created_at}
         for m in bind.execute(sa.text("SELECT id, title, created_at FROM editions"))
     ]
+    recipient_ids = {recipient["id"] for recipient in recipients}
     recipient_sessions = [
         {"token": s.token, "recipient_id": s.user_id, "created_at": s.created_at}
         for s in bind.execute(
             sa.text("SELECT token, user_id, created_at FROM user_sessions")
         )
+        if s.user_id in recipient_ids
     ]
     mailpieces = [
         {

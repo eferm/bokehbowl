@@ -20,7 +20,6 @@ from bokehbowl.db import (
     Mailpiece,
     User,
     UserSession,
-    UserStatus,
     latest_address,
     utcnow,
 )
@@ -241,7 +240,6 @@ def dashboard(
 @router.post("/users/{user_id}/unsubscribe")
 def unsubscribe(db: Db, user: UserById):
     if user.unsubscribed_at is None:
-        user.status = UserStatus.UNSUBSCRIBED
         user.unsubscribed_at = utcnow()
         db.add(user)
     db.execute(delete(UserSession).where(UserSession.user_id == user.id))
@@ -250,7 +248,6 @@ def unsubscribe(db: Db, user: UserById):
 
 @router.post("/users/{user_id}/resubscribe")
 def resubscribe(db: Db, user: UserById):
-    user.status = UserStatus.ACTIVE
     user.unsubscribed_at = None
     db.add(user)
     return RedirectResponse("/admin", status_code=303)
@@ -265,11 +262,11 @@ def export(db: Db, _: AdminOnly, table: str = "users"):
 
 
 def eligible_users(db: Session) -> list[User]:
-    """Everyone an edition may be sent to: an active subscription."""
+    """Everyone an edition may be sent to: verified and still subscribed."""
     return list(
         db.scalars(
             select(User)
-            .where(User.status == UserStatus.ACTIVE)
+            .where(User.verified_at.is_not(None), User.unsubscribed_at.is_(None))
             .order_by(User.created_at)
         )
     )
@@ -285,27 +282,37 @@ def mailpieces_of(db: Session, edition_id: str) -> list[Mailpiece]:
     )
 
 
-def unsent_users(db: Session, edition_id: str) -> list[User]:
+def unsent_users(db: Session, edition_id: str) -> list[tuple[User, Address]]:
+    """Eligible users the edition has not gone to yet, each paired with the
+    address an envelope to them would use."""
     sent_ids = {mailpiece.user_id for mailpiece in mailpieces_of(db, edition_id)}
-    return [u for u in eligible_users(db) if u.id not in sent_ids]
-
-
-def pending(db: Session, edition: Edition) -> list[tuple[User, Address]]:
-    """The default mailing list: unsent users who existed when the edition did,
-    each paired with the address an envelope to them would use."""
     return [
-        (user, latest_address(db, user.id))
-        for user in unsent_users(db, edition.id)
+        (user, address)
+        for user in eligible_users(db)
+        if user.id not in sent_ids
+        and (address := latest_address(db, user.id)) is not None
+    ]
+
+
+def pending(
+    edition: Edition, unsent: list[tuple[User, Address]]
+) -> list[tuple[User, Address]]:
+    """The default mailing list: unsent users who existed when the edition did."""
+    return [
+        (user, address)
+        for user, address in unsent
         if user.created_at <= edition.created_at
     ]
 
 
-def late(db: Session, edition: Edition) -> list[tuple[User, Address]]:
+def late(
+    edition: Edition, unsent: list[tuple[User, Address]]
+) -> list[tuple[User, Address]]:
     """Unsent users who signed up after the edition was created — sendable only
     by explicit choice."""
     return [
-        (user, latest_address(db, user.id))
-        for user in unsent_users(db, edition.id)
+        (user, address)
+        for user, address in unsent
         if user.created_at > edition.created_at
     ]
 
@@ -326,13 +333,14 @@ def create_edition(
 def edition_detail(
     request: Request, db: Db, templates: Templates, edition: EditionById
 ):
+    unsent = unsent_users(db, edition.id)
     return templates.TemplateResponse(
         request,
         "edition.html",
         {
             "edition": edition,
-            "pending": pending(db, edition),
-            "late": late(db, edition),
+            "pending": pending(edition, unsent),
+            "late": late(edition, unsent),
             "mailpieces": mailpieces_of(db, edition.id),
         },
     )
@@ -343,9 +351,13 @@ def mark_sent(
     db: Db,
     edition: EditionById,
     user: UserById,
+    address_id: Annotated[str, Form()],
 ):
-    if user.status != UserStatus.ACTIVE:
+    if user.verified_at is None or user.unsubscribed_at is not None:
         raise HTTPException(status_code=409)
+    address = db.get(Address, address_id)
+    if address is None or address.user_id != user.id:
+        raise HTTPException(status_code=404)
     already_sent = db.scalar(
         select(Mailpiece).where(
             Mailpiece.edition_id == edition.id, Mailpiece.user_id == user.id
@@ -356,7 +368,7 @@ def mark_sent(
             Mailpiece(
                 edition_id=edition.id,
                 user_id=user.id,
-                address_id=latest_address(db, user.id).id,
+                address_id=address.id,
                 sent_at=utcnow(),
             )
         )
@@ -373,7 +385,7 @@ def undo_mailpiece(db: Db, mailpiece: MailpieceById):
 @router.get("/editions/{edition_id}/labels.csv")
 def export_labels(db: Db, edition: EditionById):
     columns = [
-        "name",
+        "addressee",
         "address_line1",
         "address_line2",
         "city",
@@ -382,15 +394,7 @@ def export_labels(db: Db, edition: EditionById):
         "country",
     ]
     rows = [
-        [
-            address.addressee,
-            address.address_line1,
-            address.address_line2,
-            address.city,
-            address.region,
-            address.postal_code,
-            address.country,
-        ]
-        for _, address in pending(db, edition)
+        [getattr(address, column) for column in columns]
+        for _, address in pending(edition, unsent_users(db, edition.id))
     ]
     return csv_response(f"edition-{edition.id}-to-send.csv", columns, rows)

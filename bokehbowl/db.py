@@ -1,10 +1,9 @@
 """Database models. SQLite dialect only."""
 
 from datetime import UTC, datetime
-from enum import StrEnum
 from uuid6 import uuid7
 
-from sqlalchemy import Enum, ForeignKey, String, UniqueConstraint, select
+from sqlalchemy import ForeignKey, String, UniqueConstraint, select
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -28,25 +27,15 @@ class Base(DeclarativeBase):
     pass
 
 
-class UserStatus(StrEnum):
-    """Signed up (pending), receiving mail (active), or unsubscribed."""
-
-    PENDING = "pending"
-    ACTIVE = "active"
-    UNSUBSCRIBED = "unsubscribed"
-
-
 class User(Base):
-    """A person who signed up: an email identity and a subscription state."""
+    """A person who signed up: an email identity and two lifecycle timestamps.
+    verified_at set means they proved the email; unsubscribed_at set means they
+    left. Both unset is a signup awaiting verification."""
 
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
-    status: Mapped[UserStatus] = mapped_column(
-        Enum(UserStatus, values_callable=lambda e: [m.value for m in e]),
-        default=UserStatus.PENDING,
-    )
     verified_at: Mapped[datetime | None]
     unsubscribed_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
@@ -145,22 +134,23 @@ class AdminSession(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
-def latest_address(db: Session, user_id: str) -> Address:
+def latest_address(db: Session, user_id: str) -> Address | None:
     """The user's newest address — the one an envelope to them would use."""
-    return db.scalars(
+    return db.scalar(
         select(Address)
         .where(Address.user_id == user_id)
-        .order_by(Address.created_at.desc())
+        .order_by(Address.created_at.desc(), Address.id.desc())
         .limit(1)
-    ).one()
+    )
 
 
 def latest_manual_address(db: Session, user_id: str) -> Address:
-    """The user's newest self-entered address — what the account page shows."""
+    """The user's newest self-entered address — what the account page shows.
+    Every user has one: signup records it."""
     return db.scalars(
         select(Address)
         .where(Address.user_id == user_id, Address.derived_from_id.is_(None))
-        .order_by(Address.created_at.desc())
+        .order_by(Address.created_at.desc(), Address.id.desc())
         .limit(1)
     ).one()
 
@@ -181,7 +171,7 @@ def record_address(
     current = db.scalar(
         select(Address)
         .where(Address.user_id == user_id, Address.derived_from_id.is_(None))
-        .order_by(Address.created_at.desc())
+        .order_by(Address.created_at.desc(), Address.id.desc())
         .limit(1)
     )
     incoming = (

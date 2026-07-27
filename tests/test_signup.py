@@ -1,6 +1,6 @@
 import base64
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from bokehbowl import auth, web
 from bokehbowl.config import load_config
-from bokehbowl.db import Address, LoginCode, User, UserSession
+from bokehbowl.db import Address, LoginCode, User, UserSession, utcnow
 from tests.conftest import SIGNUP_FORM, csrf_from, sign_up_and_verify
 
 
@@ -182,8 +182,7 @@ def test_verification_prunes_expired_user_sessions(client, mailer):
     sign_up_and_verify(client, mailer)
     with Session(client.app.state.engine) as db:
         session = db.scalars(select(UserSession)).one()
-        now = datetime.now(UTC).replace(tzinfo=None)
-        session.created_at = now - web.USER_SESSION_TTL - timedelta(seconds=1)
+        session.created_at = utcnow() - web.USER_SESSION_TTL - timedelta(seconds=1)
         db.commit()
 
     csrf = csrf_from(client.get("/").text)

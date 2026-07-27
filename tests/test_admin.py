@@ -1,10 +1,10 @@
-from datetime import UTC, datetime
+import re
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from bokehbowl.db import Address, Mailpiece, User
+from bokehbowl.db import Address, Mailpiece, User, utcnow
 from tests.conftest import ADMIN_PASSWORD, SIGNUP_FORM, csrf_from, sign_up_and_verify
 
 
@@ -27,6 +27,11 @@ def sole_user_id(client) -> str:
 def sole_mailpiece_id(client) -> str:
     with Session(client.app.state.engine) as db:
         return db.scalars(select(Mailpiece.id)).one()
+
+
+def address_id_from(page_html: str) -> str:
+    """The address_id the page's mark-sent form would submit."""
+    return re.search(r'name="address_id" value="([^"]+)"', page_html).group(1)
 
 
 def update_account(client, form: dict) -> None:
@@ -126,7 +131,7 @@ def test_throttle_is_per_client_address(client):
 
 
 def test_backstop_throttles_across_addresses(client):
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = utcnow()
     client.app.state.admin_login_throttle.failures = {
         str(index): [now] for index in range(100)
     }
@@ -144,8 +149,7 @@ def test_users_table_shows_db_columns(client, mailer):
     page = client.get("/admin?table=users")
     assert "<h1>Admin</h1>" in page.text
     assert "ada@example.com" in page.text
-    assert "active" in page.text
-    for column in ["email", "status", "verified_at", "unsubscribed_at", "created_at"]:
+    for column in ["email", "verified_at", "unsubscribed_at", "created_at"]:
         assert f"<th>{column}</th>" in page.text
 
 
@@ -223,6 +227,45 @@ def test_admin_resubscribe(client, mailer):
     assert "Unsubscribe" in page
 
 
+def test_resubscribe_keeps_unverified_user_unverified(client, mailer):
+    csrf = csrf_from(client.get("/").text)
+    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
+    admin_csrf = admin_login(client)
+    user_id = sole_user_id(client)
+    client.post(f"/admin/users/{user_id}/unsubscribe", data={"csrf": admin_csrf})
+    client.post(f"/admin/users/{user_id}/resubscribe", data={"csrf": admin_csrf})
+    with Session(client.app.state.engine) as db:
+        user = db.scalars(select(User)).one()
+        assert user.verified_at is None
+        assert user.unsubscribed_at is None
+
+
+def test_verify_while_unsubscribed_records_verification(client, mailer):
+    csrf = csrf_from(client.get("/").text)
+    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
+    admin_csrf = admin_login(client)
+    user_id = sole_user_id(client)
+    client.post(f"/admin/users/{user_id}/unsubscribe", data={"csrf": admin_csrf})
+
+    response = client.post(
+        "/verify",
+        data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    with Session(client.app.state.engine) as db:
+        user = db.scalars(select(User)).one()
+        assert user.verified_at is not None
+        assert user.unsubscribed_at is not None
+
+    account_csrf = csrf_from(client.get("/account").text)
+    client.post("/account/resubscribe", data={"csrf": account_csrf})
+    with Session(client.app.state.engine) as db:
+        user = db.scalars(select(User)).one()
+        assert user.verified_at is not None
+        assert user.unsubscribed_at is None
+
+
 def create_edition(client, csrf, title="sailboat postcard") -> str:
     response = client.post(
         "/admin/editions", data={"csrf": csrf, "title": title}, follow_redirects=False
@@ -244,12 +287,17 @@ def test_edition_workflow(client, mailer):
     assert "To send (1)" in detail
     assert "Ada Lovelace" in detail
 
-    client.post(f"{detail_url}/send/{user_id}", data={"csrf": csrf})
+    address_id = address_id_from(detail)
+    client.post(
+        f"{detail_url}/send/{user_id}", data={"csrf": csrf, "address_id": address_id}
+    )
     detail = client.get(detail_url).text
     assert "To send (0)" in detail
     assert "Sent (1)" in detail
 
-    client.post(f"{detail_url}/send/{user_id}", data={"csrf": csrf})
+    client.post(
+        f"{detail_url}/send/{user_id}", data={"csrf": csrf, "address_id": address_id}
+    )
     detail = client.get(detail_url).text
     assert "Sent (1)" in detail
 
@@ -265,7 +313,11 @@ def test_mailpiece_pins_current_address(client, mailer):
     update_account(client, OCKHAM_PARK)
     csrf = admin_login(client)
     detail_url = create_edition(client, csrf)
-    client.post(f"{detail_url}/send/{sole_user_id(client)}", data={"csrf": csrf})
+    address_id = address_id_from(client.get(detail_url).text)
+    client.post(
+        f"{detail_url}/send/{sole_user_id(client)}",
+        data={"csrf": csrf, "address_id": address_id},
+    )
     detail = client.get(detail_url).text
     assert "1 Ockham Park" in detail
     with Session(client.app.state.engine) as db:
@@ -294,7 +346,10 @@ def test_late_signup_excluded_from_default_list_but_sendable(client, mailer):
     labels = client.get(f"{detail_url}/labels.csv")
     assert "Ada Lovelace" not in labels.text
 
-    client.post(f"{detail_url}/send/{sole_user_id(client)}", data={"csrf": csrf})
+    client.post(
+        f"{detail_url}/send/{sole_user_id(client)}",
+        data={"csrf": csrf, "address_id": address_id_from(detail)},
+    )
     detail = client.get(detail_url).text
     assert "Sent (1)" in detail
     assert "Signed up after this edition" not in detail
@@ -305,11 +360,46 @@ def test_mark_sent_rejects_unsubscribed_user(client, mailer):
     csrf = admin_login(client)
     user_id = sole_user_id(client)
     detail_url = create_edition(client, csrf)
+    address_id = address_id_from(client.get(detail_url).text)
     client.post(f"/admin/users/{user_id}/unsubscribe", data={"csrf": csrf})
-    response = client.post(f"{detail_url}/send/{user_id}", data={"csrf": csrf})
+    response = client.post(
+        f"{detail_url}/send/{user_id}", data={"csrf": csrf, "address_id": address_id}
+    )
     assert response.status_code == 409
     with Session(client.app.state.engine) as db:
         assert db.scalars(select(Mailpiece)).all() == []
+
+
+def test_mark_sent_without_address_is_404(client, mailer):
+    sign_up_and_verify(client, mailer)
+    with Session(client.app.state.engine) as db:
+        deleted_id = db.scalars(select(Address.id)).one()
+        db.execute(delete(Address))
+        db.commit()
+    csrf = admin_login(client)
+    user_id = sole_user_id(client)
+    detail_url = create_edition(client, csrf)
+    assert "To send (0)" in client.get(detail_url).text
+    response = client.post(
+        f"{detail_url}/send/{user_id}", data={"csrf": csrf, "address_id": deleted_id}
+    )
+    assert response.status_code == 404
+
+
+def test_mark_sent_pins_the_address_the_form_named(client, mailer):
+    sign_up_and_verify(client, mailer)
+    csrf = admin_login(client)
+    detail_url = create_edition(client, csrf)
+    printed = address_id_from(client.get(detail_url).text)
+    update_account(client, OCKHAM_PARK)
+    client.post(
+        f"{detail_url}/send/{sole_user_id(client)}",
+        data={"csrf": csrf, "address_id": printed},
+    )
+    with Session(client.app.state.engine) as db:
+        mailpiece = db.scalars(select(Mailpiece)).one()
+        assert mailpiece.address_id == printed
+        assert mailpiece.address.address_line1 == "12 Analytical Way"
 
 
 def test_validated_address_used_for_labels_but_not_displayed(client, mailer):
@@ -320,10 +410,14 @@ def test_validated_address_used_for_labels_but_not_displayed(client, mailer):
 
     csrf = admin_login(client)
     detail_url = create_edition(client, csrf)
-    assert "Flat 3" in client.get(detail_url).text
+    detail = client.get(detail_url).text
+    assert "Flat 3" in detail
     assert "Flat 3" in client.get(f"{detail_url}/labels.csv").text
 
-    client.post(f"{detail_url}/send/{sole_user_id(client)}", data={"csrf": csrf})
+    client.post(
+        f"{detail_url}/send/{sole_user_id(client)}",
+        data={"csrf": csrf, "address_id": address_id_from(detail)},
+    )
     with Session(client.app.state.engine) as db:
         mailpiece = db.scalars(select(Mailpiece)).one()
         assert mailpiece.address.address_line1 == "12 Analytical Way, Flat 3"
@@ -348,7 +442,13 @@ def test_labels_csv_lists_pending_only(client, mailer):
     detail_url = create_edition(client, csrf)
     labels = client.get(f"{detail_url}/labels.csv")
     assert "Ada Lovelace" in labels.text
-    client.post(f"{detail_url}/send/{sole_user_id(client)}", data={"csrf": csrf})
+    client.post(
+        f"{detail_url}/send/{sole_user_id(client)}",
+        data={
+            "csrf": csrf,
+            "address_id": address_id_from(client.get(detail_url).text),
+        },
+    )
     labels = client.get(f"{detail_url}/labels.csv")
     assert "Ada Lovelace" not in labels.text
 
@@ -359,7 +459,7 @@ def test_csv_export_matches_table(client, mailer):
     response = client.get("/admin/export.csv?table=users")
     assert response.status_code == 200
     header = response.text.splitlines()[0]
-    assert header.startswith("id,email,status")
+    assert header.startswith("id,email,verified_at")
     assert "ada@example.com" in response.text
     addresses = client.get("/admin/export.csv?table=addresses")
     assert "derived_from_id" in addresses.text.splitlines()[0]
