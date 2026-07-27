@@ -29,11 +29,8 @@ from bokehbowl.db import (
     User,
     UserSession,
     UserStatus,
-    activate,
     latest_manual_address,
     record_address,
-    resubscribe,
-    unsubscribe,
     utcnow,
 )
 from bokehbowl.mailer import Mailer
@@ -129,19 +126,6 @@ class VerifyForm(BaseModel):
     code: str
 
 
-def address_values(form: AddressForm) -> dict[str, str | None]:
-    """Map a submitted address form onto address row fields."""
-    return {
-        "addressee": form.name,
-        "address_line1": form.address_line1,
-        "address_line2": form.address_line2,
-        "city": form.city,
-        "region": form.region,
-        "postal_code": form.postal_code,
-        "country": form.country,
-    }
-
-
 @router.get("/")
 def index(request: Request, templates: Templates):
     return templates.TemplateResponse(request, "index.html", {"error": None})
@@ -167,17 +151,37 @@ def signup(
             },
             status_code=429,
         )
-    address = form.email
-    existing = db.scalar(select(User).where(User.email == address))
+    email = form.email
+    existing = db.scalar(select(User).where(User.email == email))
     if existing is None:
-        user = User(email=address, verified_at=None, unsubscribed_at=None)
+        user = User(email=email, verified_at=None, unsubscribed_at=None)
         db.add(user)
         db.flush()
-        record_address(db, user.id, address_values(form), utcnow())
+        record_address(
+            db,
+            user.id,
+            addressee=form.name,
+            address_line1=form.address_line1,
+            address_line2=form.address_line2,
+            city=form.city,
+            region=form.region,
+            postal_code=form.postal_code,
+            country=form.country,
+        )
     elif existing.status == UserStatus.PENDING:
-        record_address(db, existing.id, address_values(form), utcnow())
-    send_login_code(db, mailer, address, background)
-    return RedirectResponse(f"/verify?email={address}", status_code=303)
+        record_address(
+            db,
+            existing.id,
+            addressee=form.name,
+            address_line1=form.address_line1,
+            address_line2=form.address_line2,
+            city=form.city,
+            region=form.region,
+            postal_code=form.postal_code,
+            country=form.country,
+        )
+    send_login_code(db, mailer, email, background)
+    return RedirectResponse(f"/verify?email={email}", status_code=303)
 
 
 @router.get("/login")
@@ -205,11 +209,11 @@ def login(
             },
             status_code=429,
         )
-    address = form.email
-    existing = db.scalar(select(User).where(User.email == address))
+    email = form.email
+    existing = db.scalar(select(User).where(User.email == email))
     if existing is not None:
-        send_login_code(db, mailer, address, background)
-    return RedirectResponse(f"/verify?email={address}", status_code=303)
+        send_login_code(db, mailer, email, background)
+    return RedirectResponse(f"/verify?email={email}", status_code=303)
 
 
 @router.get("/verify")
@@ -230,26 +234,26 @@ def verify(
     background: BackgroundTasks,
     form: Annotated[VerifyForm, Form()],
 ):
-    address = form.email
+    email = form.email
     now = utcnow()
-    if not consume_login_code(db, address, form.code, now):
+    if not consume_login_code(db, email, form.code, now):
         return templates.TemplateResponse(
             request,
             "verify.html",
             {
-                "email": address,
+                "email": email,
                 "error": "That code didn't work. Check it, or request a new one.",
             },
             status_code=422,
         )
-    user = db.scalar(select(User).where(User.email == address))
+    user = db.scalar(select(User).where(User.email == email))
     if user is None:
         raise LoginRequired()
     newly_verified = user.status == UserStatus.PENDING
     if newly_verified:
-        activate(user, now)
+        user.status = UserStatus.ACTIVE
+        user.verified_at = now
         manual = latest_manual_address(db, user.id)
-        assert manual is not None  # signup always records an address
         background.add_task(
             mailer.send,
             to=request.app.state.config.notify_email,
@@ -292,22 +296,34 @@ def update_account(
     user: CurrentUser,
     form: Annotated[AddressForm, Form()],
 ):
-    record_address(db, user.id, address_values(form), utcnow())
+    record_address(
+        db,
+        user.id,
+        addressee=form.name,
+        address_line1=form.address_line1,
+        address_line2=form.address_line2,
+        city=form.city,
+        region=form.region,
+        postal_code=form.postal_code,
+        country=form.country,
+    )
     return RedirectResponse("/account?saved=1", status_code=303)
 
 
-@router.post("/account/unregister")
-def unregister(request: Request, db: Db, user: CurrentUser):
-    unsubscribe(user, utcnow())
+@router.post("/account/unsubscribe")
+def unsubscribe(request: Request, db: Db, user: CurrentUser):
+    user.status = UserStatus.UNSUBSCRIBED
+    user.unsubscribed_at = utcnow()
     db.add(user)
     db.execute(delete(UserSession).where(UserSession.user_id == user.id))
     request.session.pop("user_token", None)
     return RedirectResponse("/goodbye", status_code=303)
 
 
-@router.post("/account/reregister")
-def reregister(request: Request, db: Db, user: CurrentUser):
-    resubscribe(user)
+@router.post("/account/resubscribe")
+def resubscribe(request: Request, db: Db, user: CurrentUser):
+    user.status = UserStatus.ACTIVE
+    user.unsubscribed_at = None
     db.add(user)
     return RedirectResponse("/account", status_code=303)
 

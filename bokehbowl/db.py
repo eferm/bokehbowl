@@ -29,35 +29,23 @@ class Base(DeclarativeBase):
 
 
 class UserStatus(StrEnum):
-    """Subscription lifecycle: signed up, receiving mail, or unregistered."""
+    """Signed up (pending), receiving mail (active), or unsubscribed."""
 
     PENDING = "pending"
     ACTIVE = "active"
     UNSUBSCRIBED = "unsubscribed"
 
 
-class EditionStatus(StrEnum):
-    """An edition accepts new mailpieces while open."""
-
-    OPEN = "open"
-    CLOSED = "closed"
-
-
-def status_enum(values: type[StrEnum]) -> Enum:
-    """Store the enum's lowercase values, not its member names."""
-    return Enum(values, values_callable=lambda e: [m.value for m in e])
-
-
 class User(Base):
-    """A person who signed up: an email identity plus the state of their
-    subscription to future editions."""
+    """A person who signed up: an email identity and a subscription state."""
 
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     status: Mapped[UserStatus] = mapped_column(
-        status_enum(UserStatus), default=UserStatus.PENDING
+        Enum(UserStatus, values_callable=lambda e: [m.value for m in e]),
+        default=UserStatus.PENDING,
     )
     verified_at: Mapped[datetime | None]
     unsubscribed_at: Mapped[datetime | None]
@@ -113,9 +101,6 @@ class Edition(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(String(200))
-    status: Mapped[EditionStatus] = mapped_column(
-        status_enum(EditionStatus), default=EditionStatus.OPEN
-    )
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     mailpieces: Mapped[list["Mailpiece"]] = relationship(back_populates="edition")
@@ -160,67 +145,73 @@ class AdminSession(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
-ADDRESS_FIELDS = (
-    "addressee",
-    "address_line1",
-    "address_line2",
-    "city",
-    "region",
-    "postal_code",
-    "country",
-)
+def latest_address(db: Session, user_id: str) -> Address:
+    """The user's newest address — the one an envelope to them would use."""
+    return db.scalars(
+        select(Address)
+        .where(Address.user_id == user_id)
+        .order_by(Address.created_at.desc(), Address.id.desc())
+        .limit(1)
+    ).one()
 
 
-def latest_manual_address(db: Session, user_id: str) -> Address | None:
+def latest_manual_address(db: Session, user_id: str) -> Address:
     """The user's newest self-entered address — what the account page shows."""
-    return db.scalar(
+    return db.scalars(
+        select(Address)
+        .where(Address.user_id == user_id, Address.derived_from_id.is_(None))
+        .order_by(Address.created_at.desc(), Address.id.desc())
+        .limit(1)
+    ).one()
+
+
+def record_address(
+    db: Session,
+    user_id: str,
+    *,
+    addressee: str,
+    address_line1: str,
+    address_line2: str | None,
+    city: str,
+    region: str | None,
+    postal_code: str,
+    country: str,
+) -> None:
+    """Append a manual address unless the latest manual address is identical."""
+    current = db.scalar(
         select(Address)
         .where(Address.user_id == user_id, Address.derived_from_id.is_(None))
         .order_by(Address.created_at.desc(), Address.id.desc())
         .limit(1)
     )
-
-
-def mailable_address(db: Session, user_id: str) -> Address | None:
-    """The address to put on an envelope: the validated derivative of the latest
-    manual entry when one exists, else the manual entry itself."""
-    manual = latest_manual_address(db, user_id)
-    if manual is None:
-        return None
-    validated = db.scalar(
-        select(Address)
-        .where(Address.derived_from_id == manual.id)
-        .order_by(Address.created_at.desc(), Address.id.desc())
-        .limit(1)
+    incoming = (
+        addressee,
+        address_line1,
+        address_line2,
+        city,
+        region,
+        postal_code,
+        country,
     )
-    return validated or manual
-
-
-def record_address(
-    db: Session, user_id: str, values: dict[str, str | None], now: datetime
-) -> None:
-    """Append a manual address unless the latest manual address is identical."""
-    current = latest_manual_address(db, user_id)
-    if current is not None and all(
-        getattr(current, field) == value for field, value in values.items()
+    if current is not None and incoming == (
+        current.addressee,
+        current.address_line1,
+        current.address_line2,
+        current.city,
+        current.region,
+        current.postal_code,
+        current.country,
     ):
         return
-    db.add(Address(user_id=user_id, created_at=now, **values))
-
-
-def activate(user: User, now: datetime) -> None:
-    """Move a pending user to active, recording when their email was verified."""
-    user.status = UserStatus.ACTIVE
-    user.verified_at = now
-
-
-def unsubscribe(user: User, now: datetime) -> None:
-    """End the user's subscription: no future editions are mailed to them."""
-    user.status = UserStatus.UNSUBSCRIBED
-    user.unsubscribed_at = now
-
-
-def resubscribe(user: User) -> None:
-    """Restart an unsubscribed user's subscription."""
-    user.status = UserStatus.ACTIVE
-    user.unsubscribed_at = None
+    db.add(
+        Address(
+            user_id=user_id,
+            addressee=addressee,
+            address_line1=address_line1,
+            address_line2=address_line2,
+            city=city,
+            region=region,
+            postal_code=postal_code,
+            country=country,
+        )
+    )

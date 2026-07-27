@@ -71,7 +71,7 @@ def test_goodbye_page_uses_prose_layout(client):
     page = client.get("/goodbye")
     assert page.status_code == 200
     assert 'class="prose"' in page.text
-    assert "<h1>You're unregistered</h1>" in page.text
+    assert "<h1>You're unsubscribed</h1>" in page.text
 
 
 def test_signup_rejects_multipart(client):

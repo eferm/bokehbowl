@@ -10,10 +10,10 @@
   <p class="form-notice" role="status">Saved.</p>
   {% endif %}
   {% if user.unsubscribed_at %}
-  <p>You're currently <strong>unregistered</strong> — no pictures will be sent.</p>
-  <form class="form-stack" method="post" action="/account/reregister">
+  <p>You're currently <strong>unsubscribed</strong> — no pictures will be sent.</p>
+  <form class="form-stack" method="post" action="/account/resubscribe">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button type="submit">Reregister</button>
+    <button type="submit">Resubscribe</button>
   </form>
   {% endif %}
   <form class="form-stack" method="post" action="/account">
@@ -27,9 +27,9 @@
     {% endif %}
   </form>
   {% if not user.unsubscribed_at %}
-  <form class="form-stack" method="post" action="/account/unregister">
+  <form class="form-stack" method="post" action="/account/unsubscribe">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button type="submit">Unregister (stop sending me pictures)</button>
+    <button type="submit">Unsubscribe (stop sending me pictures)</button>
   </form>
   {% endif %}
 </div>

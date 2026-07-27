@@ -1,6 +1,6 @@
 import base64
 import json
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -8,13 +8,7 @@ from sqlalchemy.orm import Session
 
 from bokehbowl import auth, web
 from bokehbowl.config import load_config
-from bokehbowl.db import (
-    LoginCode,
-    User,
-    UserSession,
-    latest_manual_address,
-    utcnow,
-)
+from bokehbowl.db import Address, LoginCode, User, UserSession
 from tests.conftest import SIGNUP_FORM, csrf_from, sign_up_and_verify
 
 
@@ -119,13 +113,13 @@ def test_account_update(client, mailer):
     assert "Saved." in response.text
 
 
-def test_unregister_and_rejoin(client, mailer):
+def test_unsubscribe_and_resubscribe(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = csrf_from(client.get("/account").text)
     response = client.post(
-        "/account/unregister", data={"csrf": csrf}, follow_redirects=True
+        "/account/unsubscribe", data={"csrf": csrf}, follow_redirects=True
     )
-    assert "unregistered" in response.text
+    assert "unsubscribed" in response.text
 
     client.post("/login", data={"csrf": csrf, "email": "ada@example.com"})
     client.post(
@@ -133,11 +127,11 @@ def test_unregister_and_rejoin(client, mailer):
         data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
     )
     account = client.get("/account")
-    assert "Reregister" in account.text
+    assert "Resubscribe" in account.text
     response = client.post(
-        "/account/reregister", data={"csrf": csrf}, follow_redirects=True
+        "/account/resubscribe", data={"csrf": csrf}, follow_redirects=True
     )
-    assert "Reregister" not in response.text
+    assert "Resubscribe" not in response.text
 
 
 def test_cookie_replay_rejected_after_logout(client, mailer):
@@ -150,14 +144,14 @@ def test_cookie_replay_rejected_after_logout(client, mailer):
     assert client.get("/account", follow_redirects=False).status_code == 303
 
 
-def test_cookie_replay_rejected_after_unregister(client, mailer):
+def test_cookie_replay_rejected_after_unsubscribe(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = csrf_from(client.get("/account").text)
     saved = dict(client.cookies)
-    unregister = client.post(
-        "/account/unregister", data={"csrf": csrf}, follow_redirects=False
+    unsubscribe = client.post(
+        "/account/unsubscribe", data={"csrf": csrf}, follow_redirects=False
     )
-    assert unregister.status_code == 303
+    assert unsubscribe.status_code == 303
     client.cookies = saved
     assert client.get("/account", follow_redirects=False).status_code == 303
 
@@ -188,7 +182,8 @@ def test_verification_prunes_expired_user_sessions(client, mailer):
     sign_up_and_verify(client, mailer)
     with Session(client.app.state.engine) as db:
         session = db.scalars(select(UserSession)).one()
-        session.created_at = utcnow() - web.USER_SESSION_TTL - timedelta(seconds=1)
+        now = datetime.now(UTC).replace(tzinfo=None)
+        session.created_at = now - web.USER_SESSION_TTL - timedelta(seconds=1)
         db.commit()
 
     csrf = csrf_from(client.get("/").text)
@@ -296,19 +291,22 @@ def test_unverified_signup_data_is_overwritten(client, mailer):
         },
     )
     with Session(client.app.state.engine) as db:
-        user = db.scalars(select(User)).one()
-        address = latest_manual_address(db, user.id)
-        assert address.addressee == "Grace Hopper"
-        assert address.address_line1 == "1 Navy Yard"
-        assert address.city == "Arlington"
+        assert db.scalars(select(User)).one()
+        addresses = list(db.scalars(select(Address).order_by(Address.created_at)))
+        assert len(addresses) == 2
+        assert addresses[-1].addressee == "Grace Hopper"
+        assert addresses[-1].address_line1 == "1 Navy Yard"
+        assert addresses[-1].city == "Arlington"
     client.post(
         "/verify",
         data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
     )
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf, "name": "Someone Else"})
     with Session(client.app.state.engine) as db:
-        user = db.scalars(select(User)).one()
-        assert latest_manual_address(db, user.id).addressee == "Grace Hopper"
+        assert db.scalars(select(User)).one()
+        addresses = list(db.scalars(select(Address).order_by(Address.created_at)))
+        assert len(addresses) == 2
+        assert addresses[-1].addressee == "Grace Hopper"
 
 
 def test_attempt_cap_blocks_correct_code(client, mailer):

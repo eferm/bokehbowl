@@ -3,7 +3,7 @@
 Recipients become users with an explicit subscription status. Recipient
 versions become append-only addresses; mailpieces point at the address row
 written on the envelope instead of a version snapshot. Mailings become
-editions with an open/closed status.
+editions.
 
 Revision ID: 9157d1772fb8
 Revises: 5ea8adf60cba
@@ -20,7 +20,7 @@ down_revision = "5ea8adf60cba"
 branch_labels = None
 depends_on = None
 
-LABEL_FIELDS = (
+_LABEL_FIELDS = (
     "name",
     "address_line1",
     "address_line2",
@@ -30,10 +30,8 @@ LABEL_FIELDS = (
     "country",
 )
 
-ADDRESS_FIELDS = ("addressee",) + LABEL_FIELDS[1:]
 
-
-def create_new_tables() -> None:
+def _create_new_tables() -> None:
     op.create_table(
         "users",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -82,9 +80,6 @@ def create_new_tables() -> None:
         "editions",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("title", sa.String(length=200), nullable=False),
-        sa.Column(
-            "status", sa.Enum("open", "closed", name="editionstatus"), nullable=False
-        ),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -98,8 +93,10 @@ def create_new_tables() -> None:
         sa.PrimaryKeyConstraint("token"),
     )
 
+
+def _create_mailpieces_table(name: str) -> None:
     op.create_table(
-        "mailpieces_new",
+        name,
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("edition_id", sa.String(length=36), nullable=False),
         sa.Column("user_id", sa.String(length=36), nullable=False),
@@ -111,7 +108,7 @@ def create_new_tables() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("edition_id", "user_id"),
     )
-    with op.batch_alter_table("mailpieces_new", schema=None) as batch_op:
+    with op.batch_alter_table(name, schema=None) as batch_op:
         batch_op.create_index(
             batch_op.f("ix_mailpieces_edition_id"), ["edition_id"], unique=False
         )
@@ -120,7 +117,7 @@ def create_new_tables() -> None:
         )
 
 
-def backfill() -> None:
+def _backfill() -> list[dict]:
     bind = op.get_bind()
 
     bind.execute(
@@ -140,8 +137,8 @@ def backfill() -> None:
     )
     bind.execute(
         sa.text(
-            "INSERT INTO editions (id, title, status, created_at)"
-            " SELECT id, title, 'open', created_at FROM mailings"
+            "INSERT INTO editions (id, title, created_at)"
+            " SELECT id, title, created_at FROM mailings"
         )
     )
     bind.execute(
@@ -163,7 +160,8 @@ def backfill() -> None:
     latest_of_user: dict[str, tuple] = {}
     for row in versions:
         fields = tuple(row[2:9])
-        if latest_of_user.get(row.recipient_id) is None or latest_of_user[row.recipient_id][0] != fields:
+        current = latest_of_user.get(row.recipient_id)
+        if current is None or current[0] != fields:
             address_id = str(uuid7())
             latest_of_user[row.recipient_id] = (fields, address_id)
             bind.execute(
@@ -189,29 +187,39 @@ def backfill() -> None:
             )
         version_to_address[row.id] = latest_of_user[row.recipient_id][1]
 
+    mailpieces = []
     for mailpiece in bind.execute(
-        sa.text("SELECT id, mailing_id, recipient_id, recipient_version_id, sent_at FROM mailpieces")
+        sa.text(
+            "SELECT id, mailing_id, recipient_id, recipient_version_id, sent_at"
+            " FROM mailpieces"
+        )
     ).all():
-        bind.execute(
-            sa.text(
-                "INSERT INTO mailpieces_new (id, edition_id, user_id, address_id, sent_at)"
-                " VALUES (:id, :edition_id, :user_id, :address_id, :sent_at)"
-            ),
+        mailpieces.append(
             {
                 "id": mailpiece.id,
                 "edition_id": mailpiece.mailing_id,
                 "user_id": mailpiece.recipient_id,
                 "address_id": version_to_address[mailpiece.recipient_version_id],
                 "sent_at": mailpiece.sent_at,
-            },
+            }
         )
+    return mailpieces
 
 
 def upgrade() -> None:
-    create_new_tables()
-    backfill()
+    _create_new_tables()
+    mailpieces = _backfill()
     op.drop_table("mailpieces")
-    op.rename_table("mailpieces_new", "mailpieces")
+    _create_mailpieces_table("mailpieces")
+    bind = op.get_bind()
+    for mailpiece in mailpieces:
+        bind.execute(
+            sa.text(
+                "INSERT INTO mailpieces (id, edition_id, user_id, address_id, sent_at)"
+                " VALUES (:id, :edition_id, :user_id, :address_id, :sent_at)"
+            ),
+            mailpiece,
+        )
     op.drop_table("recipient_versions")
     op.drop_table("recipient_sessions")
     op.drop_table("recipients")
@@ -282,27 +290,6 @@ def downgrade() -> None:
         sa.PrimaryKeyConstraint("token"),
     )
 
-    op.create_table(
-        "mailpieces_old",
-        sa.Column("id", sa.String(length=36), nullable=False),
-        sa.Column("mailing_id", sa.String(length=36), nullable=False),
-        sa.Column("recipient_id", sa.String(length=36), nullable=False),
-        sa.Column("recipient_version_id", sa.String(length=36), nullable=False),
-        sa.Column("sent_at", sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(["mailing_id"], ["mailings.id"]),
-        sa.ForeignKeyConstraint(["recipient_id"], ["recipients.id"]),
-        sa.ForeignKeyConstraint(["recipient_version_id"], ["recipient_versions.id"]),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("mailing_id", "recipient_id"),
-    )
-    with op.batch_alter_table("mailpieces_old", schema=None) as batch_op:
-        batch_op.create_index(
-            batch_op.f("ix_mailpieces_mailing_id"), ["mailing_id"], unique=False
-        )
-        batch_op.create_index(
-            batch_op.f("ix_mailpieces_recipient_id"), ["recipient_id"], unique=False
-        )
-
     address_to_version: dict[str, str] = {}
     for address in bind.execute(
         sa.text(
@@ -368,26 +355,52 @@ def downgrade() -> None:
             " SELECT token, user_id, created_at FROM user_sessions"
         )
     )
+    mailpieces = []
     for mailpiece in bind.execute(
-        sa.text("SELECT id, edition_id, user_id, address_id, sent_at FROM mailpieces")
+        sa.text(
+            "SELECT id, edition_id, user_id, address_id, sent_at FROM mailpieces"
+        )
     ).all():
-        bind.execute(
-            sa.text(
-                "INSERT INTO mailpieces_old (id, mailing_id, recipient_id,"
-                " recipient_version_id, sent_at)"
-                " VALUES (:id, :mailing_id, :recipient_id, :version_id, :sent_at)"
-            ),
+        mailpieces.append(
             {
                 "id": mailpiece.id,
                 "mailing_id": mailpiece.edition_id,
                 "recipient_id": mailpiece.user_id,
                 "version_id": address_to_version[mailpiece.address_id],
                 "sent_at": mailpiece.sent_at,
-            },
+            }
         )
 
     op.drop_table("mailpieces")
-    op.rename_table("mailpieces_old", "mailpieces")
+    op.create_table(
+        "mailpieces",
+        sa.Column("id", sa.String(length=36), nullable=False),
+        sa.Column("mailing_id", sa.String(length=36), nullable=False),
+        sa.Column("recipient_id", sa.String(length=36), nullable=False),
+        sa.Column("recipient_version_id", sa.String(length=36), nullable=False),
+        sa.Column("sent_at", sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(["mailing_id"], ["mailings.id"]),
+        sa.ForeignKeyConstraint(["recipient_id"], ["recipients.id"]),
+        sa.ForeignKeyConstraint(["recipient_version_id"], ["recipient_versions.id"]),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("mailing_id", "recipient_id"),
+    )
+    with op.batch_alter_table("mailpieces", schema=None) as batch_op:
+        batch_op.create_index(
+            batch_op.f("ix_mailpieces_mailing_id"), ["mailing_id"], unique=False
+        )
+        batch_op.create_index(
+            batch_op.f("ix_mailpieces_recipient_id"), ["recipient_id"], unique=False
+        )
+    for mailpiece in mailpieces:
+        bind.execute(
+            sa.text(
+                "INSERT INTO mailpieces (id, mailing_id, recipient_id,"
+                " recipient_version_id, sent_at)"
+                " VALUES (:id, :mailing_id, :recipient_id, :version_id, :sent_at)"
+            ),
+            mailpiece,
+        )
     op.drop_table("user_sessions")
     op.drop_table("editions")
     op.drop_table("addresses")

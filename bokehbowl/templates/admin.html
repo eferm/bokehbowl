@@ -32,14 +32,14 @@
       {% if table == "users" %}
       <td>
         {% if row[columns.index("unsubscribed_at")] %}
-        <form method="post" action="/admin/users/{{ row[0] }}/reregister">
+        <form method="post" action="/admin/users/{{ row[0] }}/resubscribe">
           <input type="hidden" name="csrf" value="{{ csrf }}">
-          <button type="submit">Reregister</button>
+          <button type="submit">Resubscribe</button>
         </form>
         {% else %}
-        <form method="post" action="/admin/users/{{ row[0] }}/unregister">
+        <form method="post" action="/admin/users/{{ row[0] }}/unsubscribe">
           <input type="hidden" name="csrf" value="{{ csrf }}">
-          <button type="submit">Unregister</button>
+          <button type="submit">Unsubscribe</button>
         </form>
         {% endif %}
       </td>

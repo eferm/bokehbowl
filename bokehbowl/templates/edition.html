@@ -4,18 +4,7 @@
 {% block content %}
 <p><a href="/admin?table=editions">&larr; all editions</a></p>
 <h1>{{ edition.title }}</h1>
-<p>Created {{ edition.created_at.date() }}. Status: <strong>{{ edition.status }}</strong>.</p>
-{% if edition.status == "open" %}
-<form class="form-stack form-stack--inline" method="post" action="/admin/editions/{{ edition.id }}/close">
-  <input type="hidden" name="csrf" value="{{ csrf }}">
-  <button type="submit">Close edition (stop sending)</button>
-</form>
-{% else %}
-<form class="form-stack form-stack--inline" method="post" action="/admin/editions/{{ edition.id }}/reopen">
-  <input type="hidden" name="csrf" value="{{ csrf }}">
-  <button type="submit">Reopen edition</button>
-</form>
-{% endif %}
+<p>Created {{ edition.created_at.date() }}.</p>
 
 <h2>To send ({{ pending | length }})</h2>
 <p><a href="/admin/editions/{{ edition.id }}/labels.csv">Export this list as CSV</a></p>
