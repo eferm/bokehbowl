@@ -151,12 +151,12 @@ def signup(
             },
             status_code=429,
         )
-    email = form.email
-    existing = db.scalar(select(User).where(User.email == email))
-    if existing is None:
-        user = User(email=email, verified_at=None, unsubscribed_at=None)
+    user = db.scalar(select(User).where(User.email == form.email))
+    if user is None:
+        user = User(email=form.email, verified_at=None, unsubscribed_at=None)
         db.add(user)
         db.flush()
+    if user.status == UserStatus.PENDING:
         record_address(
             db,
             user.id,
@@ -168,20 +168,8 @@ def signup(
             postal_code=form.postal_code,
             country=form.country,
         )
-    elif existing.status == UserStatus.PENDING:
-        record_address(
-            db,
-            existing.id,
-            addressee=form.name,
-            address_line1=form.address_line1,
-            address_line2=form.address_line2,
-            city=form.city,
-            region=form.region,
-            postal_code=form.postal_code,
-            country=form.country,
-        )
-    send_login_code(db, mailer, email, background)
-    return RedirectResponse(f"/verify?email={email}", status_code=303)
+    send_login_code(db, mailer, form.email, background)
+    return RedirectResponse(f"/verify?email={form.email}", status_code=303)
 
 
 @router.get("/login")
@@ -209,11 +197,10 @@ def login(
             },
             status_code=429,
         )
-    email = form.email
-    existing = db.scalar(select(User).where(User.email == email))
+    existing = db.scalar(select(User).where(User.email == form.email))
     if existing is not None:
-        send_login_code(db, mailer, email, background)
-    return RedirectResponse(f"/verify?email={email}", status_code=303)
+        send_login_code(db, mailer, form.email, background)
+    return RedirectResponse(f"/verify?email={form.email}", status_code=303)
 
 
 @router.get("/verify")
@@ -234,19 +221,18 @@ def verify(
     background: BackgroundTasks,
     form: Annotated[VerifyForm, Form()],
 ):
-    email = form.email
     now = utcnow()
-    if not consume_login_code(db, email, form.code, now):
+    if not consume_login_code(db, form.email, form.code, now):
         return templates.TemplateResponse(
             request,
             "verify.html",
             {
-                "email": email,
+                "email": form.email,
                 "error": "That code didn't work. Check it, or request a new one.",
             },
             status_code=422,
         )
-    user = db.scalar(select(User).where(User.email == email))
+    user = db.scalar(select(User).where(User.email == form.email))
     if user is None:
         raise LoginRequired()
     newly_verified = user.status == UserStatus.PENDING

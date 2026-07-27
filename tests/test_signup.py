@@ -293,10 +293,9 @@ def test_unverified_signup_data_is_overwritten(client, mailer):
     with Session(client.app.state.engine) as db:
         assert db.scalars(select(User)).one()
         addresses = list(db.scalars(select(Address).order_by(Address.created_at)))
-        assert len(addresses) == 2
-        assert addresses[-1].addressee == "Grace Hopper"
-        assert addresses[-1].address_line1 == "1 Navy Yard"
-        assert addresses[-1].city == "Arlington"
+        assert [a.addressee for a in addresses] == ["Ada Lovelace", "Grace Hopper"]
+        assert addresses[1].address_line1 == "1 Navy Yard"
+        assert addresses[1].city == "Arlington"
     client.post(
         "/verify",
         data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
@@ -305,8 +304,7 @@ def test_unverified_signup_data_is_overwritten(client, mailer):
     with Session(client.app.state.engine) as db:
         assert db.scalars(select(User)).one()
         addresses = list(db.scalars(select(Address).order_by(Address.created_at)))
-        assert len(addresses) == 2
-        assert addresses[-1].addressee == "Grace Hopper"
+        assert [a.addressee for a in addresses] == ["Ada Lovelace", "Grace Hopper"]
 
 
 def test_attempt_cap_blocks_correct_code(client, mailer):

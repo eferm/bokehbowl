@@ -150,7 +150,7 @@ def latest_address(db: Session, user_id: str) -> Address:
     return db.scalars(
         select(Address)
         .where(Address.user_id == user_id)
-        .order_by(Address.created_at.desc(), Address.id.desc())
+        .order_by(Address.created_at.desc())
         .limit(1)
     ).one()
 
@@ -160,7 +160,7 @@ def latest_manual_address(db: Session, user_id: str) -> Address:
     return db.scalars(
         select(Address)
         .where(Address.user_id == user_id, Address.derived_from_id.is_(None))
-        .order_by(Address.created_at.desc(), Address.id.desc())
+        .order_by(Address.created_at.desc())
         .limit(1)
     ).one()
 
@@ -181,7 +181,7 @@ def record_address(
     current = db.scalar(
         select(Address)
         .where(Address.user_id == user_id, Address.derived_from_id.is_(None))
-        .order_by(Address.created_at.desc(), Address.id.desc())
+        .order_by(Address.created_at.desc())
         .limit(1)
     )
     incoming = (

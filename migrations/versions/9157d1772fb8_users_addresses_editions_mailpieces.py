@@ -5,6 +5,9 @@ versions become append-only addresses; mailpieces point at the address row
 written on the envelope instead of a version snapshot. Mailings become
 editions.
 
+Both directions read every row into memory first, swap the schema, then load
+the mapped rows back.
+
 Revision ID: 9157d1772fb8
 Revises: 5ea8adf60cba
 Create Date: 2026-07-26 10:00:00.000000
@@ -19,16 +22,6 @@ revision = "9157d1772fb8"
 down_revision = "5ea8adf60cba"
 branch_labels = None
 depends_on = None
-
-_LABEL_FIELDS = (
-    "name",
-    "address_line1",
-    "address_line2",
-    "city",
-    "region",
-    "postal_code",
-    "country",
-)
 
 
 def _create_new_tables() -> None:
@@ -93,10 +86,8 @@ def _create_new_tables() -> None:
         sa.PrimaryKeyConstraint("token"),
     )
 
-
-def _create_mailpieces_table(name: str) -> None:
     op.create_table(
-        name,
+        "mailpieces",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("edition_id", sa.String(length=36), nullable=False),
         sa.Column("user_id", sa.String(length=36), nullable=False),
@@ -108,7 +99,7 @@ def _create_mailpieces_table(name: str) -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("edition_id", "user_id"),
     )
-    with op.batch_alter_table(name, schema=None) as batch_op:
+    with op.batch_alter_table("mailpieces", schema=None) as batch_op:
         batch_op.create_index(
             batch_op.f("ix_mailpieces_edition_id"), ["edition_id"], unique=False
         )
@@ -117,118 +108,7 @@ def _create_mailpieces_table(name: str) -> None:
         )
 
 
-def _backfill() -> list[dict]:
-    bind = op.get_bind()
-
-    bind.execute(
-        sa.text(
-            """
-            INSERT INTO users (id, email, status, verified_at, unsubscribed_at, created_at)
-            SELECT id, email,
-                   CASE
-                       WHEN verified_at IS NULL THEN 'pending'
-                       WHEN unsubscribed_at IS NOT NULL THEN 'unsubscribed'
-                       ELSE 'active'
-                   END,
-                   verified_at, unsubscribed_at, created_at
-            FROM recipients
-            """
-        )
-    )
-    bind.execute(
-        sa.text(
-            "INSERT INTO editions (id, title, created_at)"
-            " SELECT id, title, created_at FROM mailings"
-        )
-    )
-    bind.execute(
-        sa.text(
-            "INSERT INTO user_sessions (token, user_id, created_at)"
-            " SELECT token, recipient_id, created_at FROM recipient_sessions"
-        )
-    )
-
-    versions = bind.execute(
-        sa.text(
-            "SELECT id, recipient_id, name, address_line1, address_line2, city,"
-            " region, postal_code, country, valid_from"
-            " FROM recipient_versions ORDER BY recipient_id, valid_from, id"
-        )
-    ).all()
-
-    version_to_address: dict[str, str] = {}
-    latest_of_user: dict[str, tuple] = {}
-    for row in versions:
-        fields = tuple(row[2:9])
-        current = latest_of_user.get(row.recipient_id)
-        if current is None or current[0] != fields:
-            address_id = str(uuid7())
-            latest_of_user[row.recipient_id] = (fields, address_id)
-            bind.execute(
-                sa.text(
-                    "INSERT INTO addresses (id, user_id, addressee, address_line1,"
-                    " address_line2, city, region, postal_code, country,"
-                    " derived_from_id, created_at)"
-                    " VALUES (:id, :user_id, :addressee, :line1, :line2, :city,"
-                    " :region, :postal_code, :country, NULL, :created_at)"
-                ),
-                {
-                    "id": address_id,
-                    "user_id": row.recipient_id,
-                    "addressee": fields[0],
-                    "line1": fields[1],
-                    "line2": fields[2],
-                    "city": fields[3],
-                    "region": fields[4],
-                    "postal_code": fields[5],
-                    "country": fields[6],
-                    "created_at": row.valid_from,
-                },
-            )
-        version_to_address[row.id] = latest_of_user[row.recipient_id][1]
-
-    mailpieces = []
-    for mailpiece in bind.execute(
-        sa.text(
-            "SELECT id, mailing_id, recipient_id, recipient_version_id, sent_at"
-            " FROM mailpieces"
-        )
-    ).all():
-        mailpieces.append(
-            {
-                "id": mailpiece.id,
-                "edition_id": mailpiece.mailing_id,
-                "user_id": mailpiece.recipient_id,
-                "address_id": version_to_address[mailpiece.recipient_version_id],
-                "sent_at": mailpiece.sent_at,
-            }
-        )
-    return mailpieces
-
-
-def upgrade() -> None:
-    _create_new_tables()
-    mailpieces = _backfill()
-    op.drop_table("mailpieces")
-    _create_mailpieces_table("mailpieces")
-    bind = op.get_bind()
-    for mailpiece in mailpieces:
-        bind.execute(
-            sa.text(
-                "INSERT INTO mailpieces (id, edition_id, user_id, address_id, sent_at)"
-                " VALUES (:id, :edition_id, :user_id, :address_id, :sent_at)"
-            ),
-            mailpiece,
-        )
-    op.drop_table("recipient_versions")
-    op.drop_table("recipient_sessions")
-    op.drop_table("recipients")
-    op.drop_table("mailings")
-
-
-def downgrade() -> None:
-    bind = op.get_bind()
-
+def _create_old_tables() -> None:
     op.create_table(
         "recipients",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -290,88 +170,6 @@ def downgrade() -> None:
         sa.PrimaryKeyConstraint("token"),
     )
 
-    address_to_version: dict[str, str] = {}
-    for address in bind.execute(
-        sa.text(
-            "SELECT a.id, a.user_id, u.email, a.addressee, a.address_line1,"
-            " a.address_line2, a.city, a.region, a.postal_code, a.country,"
-            " a.created_at"
-            " FROM addresses a JOIN users u ON u.id = a.user_id"
-            " ORDER BY a.user_id, a.created_at, a.id"
-        )
-    ).all():
-        version_id = str(uuid7())
-        address_to_version[address.id] = version_id
-        bind.execute(
-            sa.text(
-                "INSERT INTO recipient_versions (id, recipient_id, email, name,"
-                " address_line1, address_line2, city, region, postal_code,"
-                " country, valid_from)"
-                " VALUES (:id, :user_id, :email, :name, :line1, :line2, :city,"
-                " :region, :postal_code, :country, :valid_from)"
-            ),
-            {
-                "id": version_id,
-                "user_id": address.user_id,
-                "email": address.email,
-                "name": address.addressee,
-                "line1": address.address_line1,
-                "line2": address.address_line2,
-                "city": address.city,
-                "region": address.region,
-                "postal_code": address.postal_code,
-                "country": address.country,
-                "valid_from": address.created_at,
-            },
-        )
-
-    bind.execute(
-        sa.text(
-            """
-            INSERT INTO recipients (id, email, name, address_line1, address_line2,
-                                    city, region, postal_code, country,
-                                    created_at, verified_at, unsubscribed_at)
-            SELECT u.id, u.email, v.name, v.address_line1, v.address_line2,
-                   v.city, v.region, v.postal_code, v.country,
-                   u.created_at, u.verified_at, u.unsubscribed_at
-            FROM users u
-            JOIN recipient_versions v ON v.id = (
-                SELECT id FROM recipient_versions
-                WHERE recipient_id = u.id
-                ORDER BY valid_from DESC, id DESC LIMIT 1
-            )
-            """
-        )
-    )
-    bind.execute(
-        sa.text(
-            "INSERT INTO mailings (id, title, created_at)"
-            " SELECT id, title, created_at FROM editions"
-        )
-    )
-    bind.execute(
-        sa.text(
-            "INSERT INTO recipient_sessions (token, recipient_id, created_at)"
-            " SELECT token, user_id, created_at FROM user_sessions"
-        )
-    )
-    mailpieces = []
-    for mailpiece in bind.execute(
-        sa.text(
-            "SELECT id, edition_id, user_id, address_id, sent_at FROM mailpieces"
-        )
-    ).all():
-        mailpieces.append(
-            {
-                "id": mailpiece.id,
-                "mailing_id": mailpiece.edition_id,
-                "recipient_id": mailpiece.user_id,
-                "version_id": address_to_version[mailpiece.address_id],
-                "sent_at": mailpiece.sent_at,
-            }
-        )
-
-    op.drop_table("mailpieces")
     op.create_table(
         "mailpieces",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -392,16 +190,222 @@ def downgrade() -> None:
         batch_op.create_index(
             batch_op.f("ix_mailpieces_recipient_id"), ["recipient_id"], unique=False
         )
-    for mailpiece in mailpieces:
-        bind.execute(
-            sa.text(
-                "INSERT INTO mailpieces (id, mailing_id, recipient_id,"
-                " recipient_version_id, sent_at)"
-                " VALUES (:id, :mailing_id, :recipient_id, :version_id, :sent_at)"
+
+
+def _read_old_rows(bind) -> dict[str, list[dict]]:
+    """The old schema's rows, mapped onto the new schema's shape."""
+    users = [
+        {
+            "id": r.id,
+            "email": r.email,
+            "status": (
+                "pending"
+                if r.verified_at is None
+                else "unsubscribed"
+                if r.unsubscribed_at is not None
+                else "active"
             ),
-            mailpiece,
+            "verified_at": r.verified_at,
+            "unsubscribed_at": r.unsubscribed_at,
+            "created_at": r.created_at,
+        }
+        for r in bind.execute(
+            sa.text(
+                "SELECT id, email, verified_at, unsubscribed_at, created_at"
+                " FROM recipients"
+            )
         )
-    op.drop_table("user_sessions")
-    op.drop_table("editions")
-    op.drop_table("addresses")
-    op.drop_table("users")
+    ]
+    addresses: list[dict] = []
+    version_to_address: dict[str, str] = {}
+    latest_of_user: dict[str, tuple] = {}
+    versions = bind.execute(
+        sa.text(
+            "SELECT id, recipient_id, name, address_line1, address_line2, city,"
+            " region, postal_code, country, valid_from"
+            " FROM recipient_versions ORDER BY recipient_id, valid_from, id"
+        )
+    )
+    for row in versions:
+        fields = tuple(row[2:9])
+        current = latest_of_user.get(row.recipient_id)
+        if current is None or current[0] != fields:
+            current = (fields, str(uuid7()))
+            latest_of_user[row.recipient_id] = current
+            addresses.append(
+                {
+                    "id": current[1],
+                    "user_id": row.recipient_id,
+                    "addressee": fields[0],
+                    "address_line1": fields[1],
+                    "address_line2": fields[2],
+                    "city": fields[3],
+                    "region": fields[4],
+                    "postal_code": fields[5],
+                    "country": fields[6],
+                    "derived_from_id": None,
+                    "created_at": row.valid_from,
+                }
+            )
+        version_to_address[row.id] = current[1]
+    editions = [
+        {"id": m.id, "title": m.title, "created_at": m.created_at}
+        for m in bind.execute(sa.text("SELECT id, title, created_at FROM mailings"))
+    ]
+    user_sessions = [
+        {"token": s.token, "user_id": s.recipient_id, "created_at": s.created_at}
+        for s in bind.execute(
+            sa.text("SELECT token, recipient_id, created_at FROM recipient_sessions")
+        )
+    ]
+    mailpieces = [
+        {
+            "id": m.id,
+            "edition_id": m.mailing_id,
+            "user_id": m.recipient_id,
+            "address_id": version_to_address[m.recipient_version_id],
+            "sent_at": m.sent_at,
+        }
+        for m in bind.execute(
+            sa.text(
+                "SELECT id, mailing_id, recipient_id, recipient_version_id, sent_at"
+                " FROM mailpieces"
+            )
+        )
+    ]
+    return {
+        "users": users,
+        "addresses": addresses,
+        "editions": editions,
+        "user_sessions": user_sessions,
+        "mailpieces": mailpieces,
+    }
+
+
+def _read_new_rows(bind) -> dict[str, list[dict]]:
+    """The new schema's rows, mapped onto the old schema's shape."""
+    versions: list[dict] = []
+    address_to_version: dict[str, str] = {}
+    address_rows = bind.execute(
+        sa.text(
+            "SELECT a.id, a.user_id, u.email, a.addressee, a.address_line1,"
+            " a.address_line2, a.city, a.region, a.postal_code, a.country,"
+            " a.created_at"
+            " FROM addresses a JOIN users u ON u.id = a.user_id"
+            " ORDER BY a.user_id, a.created_at, a.id"
+        )
+    )
+    for a in address_rows:
+        version_id = str(uuid7())
+        address_to_version[a.id] = version_id
+        versions.append(
+            {
+                "id": version_id,
+                "recipient_id": a.user_id,
+                "email": a.email,
+                "name": a.addressee,
+                "address_line1": a.address_line1,
+                "address_line2": a.address_line2,
+                "city": a.city,
+                "region": a.region,
+                "postal_code": a.postal_code,
+                "country": a.country,
+                "valid_from": a.created_at,
+            }
+        )
+    latest_version_of: dict[str, dict] = {}
+    for version in versions:
+        latest_version_of[version["recipient_id"]] = version
+    recipients = []
+    for u in bind.execute(
+        sa.text("SELECT id, email, created_at, verified_at, unsubscribed_at FROM users")
+    ):
+        latest = latest_version_of.get(u.id)
+        if latest is None:
+            continue
+        recipients.append(
+            {
+                "id": u.id,
+                "email": u.email,
+                "name": latest["name"],
+                "address_line1": latest["address_line1"],
+                "address_line2": latest["address_line2"],
+                "city": latest["city"],
+                "region": latest["region"],
+                "postal_code": latest["postal_code"],
+                "country": latest["country"],
+                "created_at": u.created_at,
+                "verified_at": u.verified_at,
+                "unsubscribed_at": u.unsubscribed_at,
+            }
+        )
+    mailings = [
+        {"id": m.id, "title": m.title, "created_at": m.created_at}
+        for m in bind.execute(sa.text("SELECT id, title, created_at FROM editions"))
+    ]
+    recipient_sessions = [
+        {"token": s.token, "recipient_id": s.user_id, "created_at": s.created_at}
+        for s in bind.execute(
+            sa.text("SELECT token, user_id, created_at FROM user_sessions")
+        )
+    ]
+    mailpieces = [
+        {
+            "id": m.id,
+            "mailing_id": m.edition_id,
+            "recipient_id": m.user_id,
+            "recipient_version_id": address_to_version[m.address_id],
+            "sent_at": m.sent_at,
+        }
+        for m in bind.execute(
+            sa.text("SELECT id, edition_id, user_id, address_id, sent_at FROM mailpieces")
+        )
+    ]
+    return {
+        "recipients": recipients,
+        "recipient_versions": versions,
+        "mailings": mailings,
+        "recipient_sessions": recipient_sessions,
+        "mailpieces": mailpieces,
+    }
+
+
+def _insert_rows(bind, table: str, rows: list[dict]) -> None:
+    if rows:
+        columns = ", ".join(rows[0])
+        placeholders = ", ".join(f":{column}" for column in rows[0])
+        bind.execute(
+            sa.text(f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"), rows
+        )
+
+
+def upgrade() -> None:
+    bind = op.get_bind()
+    snapshot = _read_old_rows(bind)
+    for table in (
+        "mailpieces",
+        "recipient_versions",
+        "recipient_sessions",
+        "recipients",
+        "mailings",
+    ):
+        op.drop_table(table)
+    _create_new_tables()
+    for table in ("users", "addresses", "editions", "user_sessions", "mailpieces"):
+        _insert_rows(bind, table, snapshot[table])
+
+
+def downgrade() -> None:
+    bind = op.get_bind()
+    snapshot = _read_new_rows(bind)
+    for table in ("mailpieces", "user_sessions", "addresses", "editions", "users"):
+        op.drop_table(table)
+    _create_old_tables()
+    for table in (
+        "recipients",
+        "recipient_versions",
+        "mailings",
+        "recipient_sessions",
+        "mailpieces",
+    ):
+        _insert_rows(bind, table, snapshot[table])
