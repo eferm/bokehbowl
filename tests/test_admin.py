@@ -436,6 +436,23 @@ def test_new_manual_address_supersedes_validation(client, mailer):
     assert "Flat 3" not in labels
 
 
+def test_validation_finishing_after_a_new_manual_address_stays_unused(client, mailer):
+    sign_up_and_verify(client, mailer)
+    with Session(client.app.state.engine) as db:
+        original_id = db.scalars(select(Address.id)).one()
+    update_account(client, OCKHAM_PARK)
+    with Session(client.app.state.engine) as db:
+        original = db.get(Address, original_id)
+        db.add(validated_copy_of(original, address_line1="12 Analytical Way, Flat 3"))
+        db.commit()
+
+    csrf = admin_login(client)
+    detail_url = create_edition(client, csrf)
+    labels = client.get(f"{detail_url}/labels.csv").text
+    assert "1 Ockham Park" in labels
+    assert "Flat 3" not in labels
+
+
 def test_labels_csv_lists_pending_only(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)

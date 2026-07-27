@@ -85,19 +85,21 @@ Back up `data/`, `.env`, and `instance/` before updates.
 
 ### Create an edition
 
-At `/admin`, create an edition and open it. The edition page lists eligible
+At `/admin`, create an edition. The edition page lists eligible
 users and provides a CSV export for labels. Marking an item sent records the
 address used for that mailpiece. Users joining after the edition's creation
 appear separately and can be included deliberately.
 
 ### Data model
 
-- **users** — one row per person: their email identity and subscription
-  status (`pending`, `active`, `unsubscribed`).
+- **users** — one row per person: their email identity and two lifecycle
+  timestamps. `verified_at` set means they proved the email;
+  `unsubscribed_at` set means they left. Editions go to users with
+  `verified_at` set and `unsubscribed_at` unset.
 - **addresses** — every postal address a user has had, append-only. A row
   with `derived_from_id` set is a validated correction of the manual entry it
-  points at. Mail uses the latest address; the account page shows the user's
-  own latest manual entry.
+  points at. Mail uses the newest manual entry, corrected by its newest
+  validation when one exists; the account page shows the manual entry.
 - **editions** — one print run (a postcard design, a photo, a letter).
 - **mailpieces** — one physical piece of mail: an edition sent to one user,
   pinned to the exact address row written on the envelope.

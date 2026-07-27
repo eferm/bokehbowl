@@ -297,7 +297,6 @@ def update_account(
 @router.post("/account/unsubscribe")
 def unsubscribe(request: Request, db: Db, user: CurrentUser):
     user.unsubscribed_at = utcnow()
-    db.add(user)
     db.execute(delete(UserSession).where(UserSession.user_id == user.id))
     request.session.pop("user_token", None)
     return RedirectResponse("/goodbye", status_code=303)
@@ -306,7 +305,6 @@ def unsubscribe(request: Request, db: Db, user: CurrentUser):
 @router.post("/account/resubscribe")
 def resubscribe(request: Request, db: Db, user: CurrentUser):
     user.unsubscribed_at = None
-    db.add(user)
     return RedirectResponse("/account", status_code=303)
 
 

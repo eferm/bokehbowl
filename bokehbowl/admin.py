@@ -241,7 +241,6 @@ def dashboard(
 def unsubscribe(db: Db, user: UserById):
     if user.unsubscribed_at is None:
         user.unsubscribed_at = utcnow()
-        db.add(user)
     db.execute(delete(UserSession).where(UserSession.user_id == user.id))
     return RedirectResponse("/admin", status_code=303)
 
@@ -249,7 +248,6 @@ def unsubscribe(db: Db, user: UserById):
 @router.post("/users/{user_id}/resubscribe")
 def resubscribe(db: Db, user: UserById):
     user.unsubscribed_at = None
-    db.add(user)
     return RedirectResponse("/admin", status_code=303)
 
 

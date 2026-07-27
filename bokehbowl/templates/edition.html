@@ -1,4 +1,16 @@
 {% extends "base.html" %}
+{% macro address_lines(address) %}
+        {{ address.address_line1 }}{% if address.address_line2 %}<br>{{ address.address_line2 }}{% endif %}<br>
+        {{ address.city }}{% if address.region %}, {{ address.region }}{% endif %} {{ address.postal_code }}<br>
+        {{ address.country }}
+{%- endmacro %}
+{% macro mark_sent_form(edition, user, address, csrf) %}
+        <form method="post" action="/admin/editions/{{ edition.id }}/send/{{ user.id }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="address_id" value="{{ address.id }}">
+          <button type="submit">Mark sent</button>
+        </form>
+{%- endmacro %}
 {% block title %}{{ edition.title }} - Bokehbowl{% endblock %}
 {% block body_class %}admin{% endblock %}
 {% block content %}
@@ -17,19 +29,9 @@
     {% for user, address in pending %}
     <tr>
       <td>{{ address.addressee }}</td>
-      <td>
-        {{ address.address_line1 }}{% if address.address_line2 %}<br>{{ address.address_line2 }}{% endif %}<br>
-        {{ address.city }}{% if address.region %}, {{ address.region }}{% endif %} {{ address.postal_code }}<br>
-        {{ address.country }}
-      </td>
+      <td>{{ address_lines(address) }}</td>
       <td>{{ user.email }}</td>
-      <td>
-        <form method="post" action="/admin/editions/{{ edition.id }}/send/{{ user.id }}">
-          <input type="hidden" name="csrf" value="{{ csrf }}">
-          <input type="hidden" name="address_id" value="{{ address.id }}">
-          <button type="submit">Mark sent</button>
-        </form>
-      </td>
+      <td>{{ mark_sent_form(edition, user, address, csrf) }}</td>
     </tr>
     {% else %}
     <tr><td colspan="4">Nobody left to send to.</td></tr>
@@ -50,19 +52,9 @@
       {% for user, address in late %}
       <tr>
         <td>{{ address.addressee }}</td>
-        <td>
-          {{ address.address_line1 }}{% if address.address_line2 %}<br>{{ address.address_line2 }}{% endif %}<br>
-          {{ address.city }}{% if address.region %}, {{ address.region }}{% endif %} {{ address.postal_code }}<br>
-          {{ address.country }}
-        </td>
+        <td>{{ address_lines(address) }}</td>
         <td>{{ user.created_at.date() }}</td>
-        <td>
-          <form method="post" action="/admin/editions/{{ edition.id }}/send/{{ user.id }}">
-            <input type="hidden" name="csrf" value="{{ csrf }}">
-            <input type="hidden" name="address_id" value="{{ address.id }}">
-            <button type="submit">Mark sent</button>
-          </form>
-        </td>
+        <td>{{ mark_sent_form(edition, user, address, csrf) }}</td>
       </tr>
       {% endfor %}
     </tbody>

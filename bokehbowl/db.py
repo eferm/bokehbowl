@@ -3,7 +3,14 @@
 from datetime import UTC, datetime
 from uuid6 import uuid7
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint, select
+from sqlalchemy import (
+    ColumnElement,
+    ForeignKey,
+    ScalarResult,
+    String,
+    UniqueConstraint,
+    select,
+)
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -134,24 +141,36 @@ class AdminSession(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
-def latest_address(db: Session, user_id: str) -> Address | None:
-    """The user's newest address — the one an envelope to them would use."""
-    return db.scalar(
+def _newest_address(
+    db: Session, *conditions: ColumnElement[bool]
+) -> ScalarResult[Address]:
+    """The newest address matching the conditions, with created_at ties broken
+    on id."""
+    return db.scalars(
         select(Address)
-        .where(Address.user_id == user_id)
+        .where(*conditions)
         .order_by(Address.created_at.desc(), Address.id.desc())
         .limit(1)
     )
 
 
+def latest_address(db: Session, user_id: str) -> Address | None:
+    """The address an envelope to the user would use: the newest validated
+    correction of their newest manual entry, or that entry itself."""
+    manual = _newest_address(
+        db, Address.user_id == user_id, Address.derived_from_id.is_(None)
+    ).first()
+    if manual is None:
+        return None
+    derived = _newest_address(db, Address.derived_from_id == manual.id).first()
+    return derived or manual
+
+
 def latest_manual_address(db: Session, user_id: str) -> Address:
     """The user's newest self-entered address — what the account page shows.
     Every user has one: signup records it."""
-    return db.scalars(
-        select(Address)
-        .where(Address.user_id == user_id, Address.derived_from_id.is_(None))
-        .order_by(Address.created_at.desc(), Address.id.desc())
-        .limit(1)
+    return _newest_address(
+        db, Address.user_id == user_id, Address.derived_from_id.is_(None)
     ).one()
 
 
@@ -168,12 +187,9 @@ def record_address(
     country: str,
 ) -> None:
     """Append a manual address unless the latest manual address is identical."""
-    current = db.scalar(
-        select(Address)
-        .where(Address.user_id == user_id, Address.derived_from_id.is_(None))
-        .order_by(Address.created_at.desc(), Address.id.desc())
-        .limit(1)
-    )
+    current = _newest_address(
+        db, Address.user_id == user_id, Address.derived_from_id.is_(None)
+    ).first()
     incoming = (
         addressee,
         address_line1,
