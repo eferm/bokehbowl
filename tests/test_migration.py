@@ -356,9 +356,45 @@ def test_head_moves_derived_rows_into_normalized_addresses(old_database):
     assert addresses["d-ada-1"] == DERIVED_ROW
     mailpieces = by_id(engine, "SELECT * FROM mailpieces")
     assert mailpieces["mp-ada"]["address_id"] == "d-ada-1"
-    grace_print = addresses[mailpieces["mp-grace"]["address_id"]]
-    assert grace_print["derived_from_id"] == "v-grace-1"
-    assert grace_print["address_line1"] == "3 Mark II Lane"
+    # d-ada-1 edits its address, so it comes back as a derived row of its own.
+    # Grace's print version copies hers verbatim and collapses into it.
+    assert mailpieces["mp-grace"]["address_id"] == "v-grace-1"
+    assert addresses["v-grace-1"]["derived_from_id"] is None
+    assert addresses["v-grace-1"]["address_line1"] == "3 Mark II Lane"
+
+
+def test_round_trip_from_head_to_the_recipient_schema_and_back(old_database):
+    """The whole chain down to the recipients era and back up again. Verified
+    users, their addresses, and their mail return row for row."""
+    config, engine = old_database
+    command.upgrade(config, "head")
+    command.downgrade(config, OLD_REVISION)
+
+    recipients = by_id(engine, "SELECT * FROM recipients", key="email")
+    assert set(recipients) == {"ada@example.com", "grace@example.com"}
+    assert recipients["ada@example.com"]["address_line1"] == "1 Ockham Park"
+    assert recipients["ada@example.com"]["verified_at"] == DAY_1
+    assert recipients["grace@example.com"]["unsubscribed_at"] == DAY_4
+
+    versions = by_id(engine, "SELECT * FROM recipient_versions")
+    assert set(versions) == {"v-ada-1", "v-ada-3", "v-grace-1"}
+    assert versions["v-ada-1"] == RECIPIENT_VERSIONS[0]
+    assert versions["v-grace-1"] == RECIPIENT_VERSIONS[3]
+
+    mailpieces = by_id(engine, "SELECT * FROM mailpieces")
+    assert mailpieces["mp-ada"]["recipient_version_id"] == "v-ada-1"
+    assert mailpieces["mp-grace"] == MAILPIECES[1]
+
+    assert rows(engine, "SELECT * FROM mailings") == MAILINGS
+    assert rows(engine, "SELECT * FROM recipient_sessions") == RECIPIENT_SESSIONS
+
+    command.upgrade(config, "head")
+    assert rows(engine, "PRAGMA foreign_key_check") == []
+    assert set(by_id(engine, "SELECT * FROM users", key="email")) == {
+        "ada@example.com",
+        "grace@example.com",
+    }
+    assert len(rows(engine, "SELECT * FROM mailpieces")) == 2
 
 
 def test_downgrade_from_head_keeps_verified_users_only(old_database):

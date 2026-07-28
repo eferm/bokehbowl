@@ -316,6 +316,7 @@ def _read_new_rows(bind) -> dict[str, list[dict]]:
     ]
     addresses = []
     user_of_address: dict[str, str] = {}
+    fields_of_address: dict[str, tuple] = {}
     for a in bind.execute(
         sa.text(
             "SELECT id, user_id, addressee, address_line1, address_line2,"
@@ -323,6 +324,7 @@ def _read_new_rows(bind) -> dict[str, list[dict]]:
         )
     ):
         user_of_address[a.id] = a.user_id
+        fields_of_address[a.id] = tuple(getattr(a, field) for field in ADDRESS_FIELDS)
         addresses.append(
             {
                 "id": a.id,
@@ -332,12 +334,20 @@ def _read_new_rows(bind) -> dict[str, list[dict]]:
                 "created_at": a.created_at,
             }
         )
+    # A print version whose fields match its address prints the same envelope.
+    # The old schema says that by pointing the mailpiece at the address itself,
+    # so those rows collapse into their parent rather than becoming copies.
+    verbatim_prints: dict[str, str] = {}
     for c in bind.execute(
         sa.text(
             "SELECT id, address_id, addressee, address_line1, address_line2,"
             " city, region, postal_code, country, created_at FROM normalized_addresses"
         )
     ):
+        fields = tuple(getattr(c, field) for field in ADDRESS_FIELDS)
+        if fields == fields_of_address[c.address_id]:
+            verbatim_prints[c.id] = c.address_id
+            continue
         addresses.append(
             {
                 "id": c.id,
@@ -358,7 +368,9 @@ def _read_new_rows(bind) -> dict[str, list[dict]]:
             "id": m.id,
             "edition_id": m.edition_id,
             "user_id": m.user_id,
-            "address_id": m.normalized_address_id,
+            "address_id": verbatim_prints.get(
+                m.normalized_address_id, m.normalized_address_id
+            ),
             "sent_at": m.sent_at,
         }
         for m in bind.execute(
