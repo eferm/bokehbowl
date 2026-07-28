@@ -63,11 +63,13 @@ Uvicorn runs with `--proxy-headers` and takes the client IP and scheme from
 `X-Forwarded-*`. `FORWARDED_ALLOW_IPS` names the proxy hops trusted to set those
 headers (default: loopback); the compose file sets it to the Docker network
 ranges. On other hosting, set it to the address the platform's proxy connects
-from. The client IP feeds the per-IP throttle on admin login.
+from. The client IP feeds the per-address throttles on admin login, code
+requests, and code submissions.
 
 For a Cloudflare proxy, use Full (strict) TLS with an origin certificate, or use
-a Cloudflare Tunnel. A rate-limiting rule for `POST /signup`, `POST /login`, and
-`POST /admin/login` adds edge protection for public instances.
+a Cloudflare Tunnel. A rate-limiting rule for `POST /signup`, `POST /login`,
+`POST /signup/verify`, `POST /login/verify`, and `POST /admin/login` adds edge
+protection for public instances.
 
 ### Updates
 
@@ -133,6 +135,12 @@ Each invariant lives at a named enforcement layer:
 - A normalized address prints only while its raw address is the user's
   latest — each normalized row is pinned to one address row by `address_id`.
 - Login codes are single-use — consuming a code deletes it.
+- A login code keeps attempts in reserve for the address that asked for it —
+  the per-client-address cap on the verify routes is lower than the per-code
+  attempt cap, and a throttled request is refused before an attempt is spent.
+- Every client address reaches part of the hourly code budget — the per-address
+  cap on `POST /signup` and `POST /login` admits four windows an hour,
+  totalling two fifths of `HOURLY_CODE_CAP`.
 - Foreign keys hold at runtime, and deleting a user cascades down the
   user-rooted chain — the engine factory turns `PRAGMA foreign_keys` on for
   every connection.

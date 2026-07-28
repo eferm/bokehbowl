@@ -14,9 +14,66 @@ from bokehbowl.mailer import Mailer
 
 CODE_TTL = timedelta(minutes=10)
 RESEND_COOLDOWN = timedelta(seconds=60)
-MAX_ATTEMPTS = 5
+MAX_ATTEMPTS = 10
 HOURLY_CODE_CAP = 50
 DAILY_CODE_CAP = 300
+
+
+def client_address(request: Request) -> str:
+    """The client IP the proxy chain reports for this request."""
+    return request.client.host if request.client else ""
+
+
+class AddressThrottle:
+    """Event timestamps per client address, with a per-address cap and an
+    instance-wide backstop over a sliding window."""
+
+    def __init__(self, cap: int, backstop: int, window: timedelta) -> None:
+        self.cap = cap
+        self.backstop = backstop
+        self.window = window
+        self.events: dict[str, list[datetime]] = {}
+
+    def prune(self, now: datetime) -> None:
+        """Drop events older than the window from every bucket, discarding
+        emptied ones."""
+        for address in list(self.events):
+            self.events[address] = [
+                happened_at
+                for happened_at in self.events[address]
+                if happened_at > now - self.window
+            ]
+            if not self.events[address]:
+                del self.events[address]
+
+    def throttled(self, address: str, now: datetime) -> bool:
+        """True when the address's bucket is at its cap or the instance total is
+        at its backstop, after pruning to the window."""
+        self.prune(now)
+        total = sum(len(entries) for entries in self.events.values())
+        return len(self.events.get(address, [])) >= self.cap or total >= self.backstop
+
+    def record(self, address: str, now: datetime) -> None:
+        """Append an event for the address at the given time."""
+        self.events.setdefault(address, []).append(now)
+
+
+def code_attempt_throttle() -> AddressThrottle:
+    """A throttle for wrong login codes. Its cap is half of MAX_ATTEMPTS, so the
+    wrong codes one client address can submit leave every code attempts in
+    reserve for the address that asked for it."""
+    return AddressThrottle(
+        cap=MAX_ATTEMPTS // 2, backstop=500, window=timedelta(minutes=15)
+    )
+
+
+def code_request_throttle() -> AddressThrottle:
+    """A throttle for code requests. Four of its windows fit in an hour, so one
+    client address reaches two fifths of HOURLY_CODE_CAP and the rest of the
+    hourly budget stays open to other clients."""
+    return AddressThrottle(
+        cap=HOURLY_CODE_CAP // 10, backstop=200, window=timedelta(minutes=15)
+    )
 
 
 def hash_code(email: str, code: str) -> str:

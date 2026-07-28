@@ -20,6 +20,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from bokehbowl.auth import (
+    client_address,
     consume_login_code,
     require_csrf,
     send_login_code,
@@ -147,7 +148,10 @@ def signup(
     background: BackgroundTasks,
     form: Annotated[SignupForm, Form()],
 ):
-    if volume_capped(db, utcnow()):
+    now = utcnow()
+    throttle = request.app.state.code_request_throttle
+    address = client_address(request)
+    if throttle.throttled(address, now) or volume_capped(db, now):
         return templates.TemplateResponse(
             request,
             "index.html",
@@ -158,6 +162,7 @@ def signup(
             },
             status_code=429,
         )
+    throttle.record(address, now)
     send_login_code(db, mailer, form.email, background)
     return templates.TemplateResponse(
         request,
@@ -182,7 +187,10 @@ def login(
 ):
     """Emails a sign-in code to an address that has an account, then sends every
     caller to the code form."""
-    if volume_capped(db, utcnow()):
+    now = utcnow()
+    throttle = request.app.state.code_request_throttle
+    address = client_address(request)
+    if throttle.throttled(address, now) or volume_capped(db, now):
         return templates.TemplateResponse(
             request,
             "login.html",
@@ -193,6 +201,7 @@ def login(
             },
             status_code=429,
         )
+    throttle.record(address, now)
     existing = db.scalar(select(User).where(User.email == form.email))
     if existing is not None:
         send_login_code(db, mailer, form.email, background)
@@ -236,7 +245,21 @@ def signup_verify(
     form: Annotated[SignupVerifyForm, Form()],
 ):
     now = utcnow()
+    throttle = request.app.state.code_attempt_throttle
+    address = client_address(request)
+    if throttle.throttled(address, now):
+        return templates.TemplateResponse(
+            request,
+            "verify.html",
+            {
+                "email": form.email,
+                "error": "Too many attempts from here. Try again in a few minutes.",
+                "signup": form,
+            },
+            status_code=429,
+        )
     if not consume_login_code(db, form.email, form.code, now):
+        throttle.record(address, now)
         return templates.TemplateResponse(
             request,
             "verify.html",
@@ -278,7 +301,21 @@ def login_verify(
     form: Annotated[VerifyForm, Form()],
 ):
     now = utcnow()
+    throttle = request.app.state.code_attempt_throttle
+    address = client_address(request)
+    if throttle.throttled(address, now):
+        return templates.TemplateResponse(
+            request,
+            "verify.html",
+            {
+                "email": form.email,
+                "error": "Too many attempts from here. Try again in a few minutes.",
+                "signup": None,
+            },
+            status_code=429,
+        )
     if not consume_login_code(db, form.email, form.code, now):
+        throttle.record(address, now)
         return templates.TemplateResponse(
             request,
             "verify.html",

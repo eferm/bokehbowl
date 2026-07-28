@@ -135,7 +135,7 @@ def test_throttle_is_per_client_address(client):
 
 def test_backstop_throttles_across_addresses(client):
     now = utcnow()
-    client.app.state.admin_login_throttle.failures = {
+    client.app.state.admin_login_throttle.events = {
         str(index): [now] for index in range(100)
     }
     csrf = csrf_from(client.get("/admin/login").text)

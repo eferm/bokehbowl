@@ -3,7 +3,7 @@
 import csv
 import io
 import secrets
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -11,7 +11,7 @@ from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
-from bokehbowl.auth import require_csrf
+from bokehbowl.auth import AddressThrottle, client_address, require_csrf
 from bokehbowl.db import (
     ADDRESS_FIELDS,
     Address,
@@ -41,10 +41,13 @@ class NormalizeForm(AddressForm):
 
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_csrf)])
 
-ADMIN_LOGIN_CAP = 10
-ADMIN_LOGIN_BACKSTOP = 100
-ADMIN_LOGIN_WINDOW = timedelta(minutes=15)
 ADMIN_SESSION_TTL = timedelta(days=14)
+
+
+def admin_login_throttle() -> AddressThrottle:
+    """A throttle for wrong admin passwords."""
+    return AddressThrottle(cap=10, backstop=100, window=timedelta(minutes=15))
+
 
 TABLES: dict[str, tuple[type[Base], InstrumentedAttribute]] = {
     "users": (User, User.created_at),
@@ -53,40 +56,6 @@ TABLES: dict[str, tuple[type[Base], InstrumentedAttribute]] = {
     "editions": (Edition, Edition.created_at),
     "mailpieces": (Mailpiece, Mailpiece.sent_at),
 }
-
-
-class LoginThrottle:
-    """Failed-login timestamps per client address, with a per-address cap and an
-    instance-wide backstop over a sliding window."""
-
-    def __init__(self) -> None:
-        self.failures: dict[str, list[datetime]] = {}
-
-    def prune(self, now: datetime) -> None:
-        """Drop attempts older than the window from every bucket, discarding
-        emptied ones."""
-        for address in list(self.failures):
-            self.failures[address] = [
-                failed_at
-                for failed_at in self.failures[address]
-                if failed_at > now - ADMIN_LOGIN_WINDOW
-            ]
-            if not self.failures[address]:
-                del self.failures[address]
-
-    def throttled(self, address: str, now: datetime) -> bool:
-        """True when the address's bucket is at its cap or the instance total is at
-        its backstop, after pruning to the window."""
-        self.prune(now)
-        total = sum(len(entries) for entries in self.failures.values())
-        return (
-            len(self.failures.get(address, [])) >= ADMIN_LOGIN_CAP
-            or total >= ADMIN_LOGIN_BACKSTOP
-        )
-
-    def record(self, address: str, now: datetime) -> None:
-        """Append a failed attempt for the address at the given time."""
-        self.failures.setdefault(address, []).append(now)
 
 
 def formula_safe(value: object) -> object:
@@ -189,7 +158,7 @@ def login(
 ):
     now = utcnow()
     throttle = request.app.state.admin_login_throttle
-    address = request.client.host if request.client else ""
+    address = client_address(request)
     if throttle.throttled(address, now):
         return templates.TemplateResponse(
             request,

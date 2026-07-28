@@ -3,6 +3,7 @@ import json
 from datetime import timedelta
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -329,20 +330,88 @@ def test_existing_user_signup_signs_in_and_keeps_the_saved_address(client, maile
         assert address.addressee == "Ada Lovelace"
 
 
+def request_codes(app, address: str, count: int, prefix: str = "user") -> list[int]:
+    """Submit `count` signups from one client address, a fresh email each."""
+    with TestClient(app, base_url="https://testserver", client=(address, 999)) as guest:
+        csrf = csrf_from(guest.get("/").text)
+        return [
+            guest.post(
+                "/signup",
+                data={**SIGNUP_FORM, "email": f"{prefix}{n}@example.com", "csrf": csrf},
+            ).status_code
+            for n in range(count)
+        ]
+
+
+def test_code_requests_are_capped_per_address(client, mailer):
+    cap = client.app.state.code_request_throttle.cap
+    statuses = request_codes(client.app, "10.0.0.1", cap + 1)
+    assert statuses == [200] * cap + [429]
+    assert len(mailer.sent) == cap
+
+
+def test_one_address_cannot_exhaust_the_code_budget(client, mailer):
+    cap = client.app.state.code_request_throttle.cap
+    request_codes(client.app, "10.0.0.1", cap, prefix="flood")
+    assert request_codes(client.app, "10.0.0.2", 1, prefix="grace") == [200]
+
+
+def burn_attempts(app, address: str, code: str, count: int) -> None:
+    """Submit a wrong code `count` times from one client address."""
+    with TestClient(app, base_url="https://testserver", client=(address, 999)) as guest:
+        csrf = csrf_from(guest.get("/").text)
+        for _ in range(count):
+            response = guest.post(
+                "/signup/verify", data={**SIGNUP_FORM, "csrf": csrf, "code": code}
+            )
+            assert response.status_code == 422
+
+
 def test_attempt_cap_blocks_correct_code(client, mailer):
     csrf = csrf_from(client.get("/").text)
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
     correct = mailer.last_code()
     wrong = "000000" if correct != "000000" else "111111"
-    for _ in range(5):
-        response = client.post(
-            "/signup/verify", data={**SIGNUP_FORM, "csrf": csrf, "code": wrong}
-        )
-        assert response.status_code == 422
+
+    # Spread across addresses so the per-address throttle never fires and the
+    # code's own attempt cap is what runs out.
+    cap = client.app.state.code_attempt_throttle.cap
+    burn_attempts(client.app, "10.0.0.1", wrong, cap)
+    burn_attempts(client.app, "10.0.0.2", wrong, auth.MAX_ATTEMPTS - cap)
+
     response = client.post(
         "/signup/verify", data={**SIGNUP_FORM, "csrf": csrf, "code": correct}
     )
     assert response.status_code == 422
+
+
+def test_one_address_cannot_burn_a_code_to_death(client, mailer):
+    csrf = csrf_from(client.get("/").text)
+    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
+    correct = mailer.last_code()
+    wrong = "000000" if correct != "000000" else "111111"
+
+    burn_attempts(
+        client.app, "10.0.0.1", wrong, client.app.state.code_attempt_throttle.cap
+    )
+    with TestClient(
+        client.app, base_url="https://testserver", client=("10.0.0.1", 999)
+    ) as attacker:
+        attacker_csrf = csrf_from(attacker.get("/").text)
+        response = attacker.post(
+            "/signup/verify",
+            data={**SIGNUP_FORM, "csrf": attacker_csrf, "code": wrong},
+        )
+        assert response.status_code == 429
+        assert "Too many attempts" in response.text
+
+    # The code survives the burn, so its owner still signs in.
+    response = client.post(
+        "/signup/verify",
+        data={**SIGNUP_FORM, "csrf": csrf, "code": correct},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
 
 
 def test_consumed_code_cannot_be_replayed(client, mailer):

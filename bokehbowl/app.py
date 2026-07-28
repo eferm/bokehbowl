@@ -10,9 +10,9 @@ from sqlalchemy import Engine
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.staticfiles import StaticFiles
 
-from bokehbowl.admin import AdminRequired, LoginThrottle
+from bokehbowl.admin import AdminRequired, admin_login_throttle
 from bokehbowl.admin import router as admin_router
-from bokehbowl.auth import csrf_token
+from bokehbowl.auth import code_attempt_throttle, code_request_throttle, csrf_token
 from bokehbowl.config import AppConfig
 from bokehbowl.mailer import Mailer
 from bokehbowl.web import LoginRequired
@@ -49,7 +49,9 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
     app.state.config = config
     app.state.engine = engine
     app.state.mailer = mailer
-    app.state.admin_login_throttle = LoginThrottle()
+    app.state.admin_login_throttle = admin_login_throttle()
+    app.state.code_attempt_throttle = code_attempt_throttle()
+    app.state.code_request_throttle = code_request_throttle()
     static = InstanceStaticFiles()
     templates = Jinja2Templates(
         directory=[INSTANCE_TEMPLATES_DIR, TEMPLATES_DIR],
