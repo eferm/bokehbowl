@@ -155,7 +155,7 @@ def signup(
         user = User(email=form.email, verified_at=None, unsubscribed_at=None)
         db.add(user)
         db.flush()
-    if user.verified_at is None and user.unsubscribed_at is None:
+    if user.verified_at is None:
         record_address(
             db,
             user.id,

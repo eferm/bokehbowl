@@ -306,6 +306,28 @@ def test_unverified_signup_data_is_overwritten(client, mailer):
         assert [a.addressee for a in addresses] == ["Ada Lovelace", "Grace Hopper"]
 
 
+def test_unsubscribed_signup_still_records_address(client, mailer):
+    csrf = csrf_from(client.get("/").text)
+    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
+    with Session(client.app.state.engine) as db:
+        user = db.scalars(select(User)).one()
+        user.unsubscribed_at = utcnow()
+        db.commit()
+    client.post(
+        "/signup",
+        data={
+            **SIGNUP_FORM,
+            "csrf": csrf,
+            "name": "Grace Hopper",
+            "address_line1": "1 Navy Yard",
+            "city": "Arlington",
+        },
+    )
+    with Session(client.app.state.engine) as db:
+        addresses = list(db.scalars(select(Address).order_by(Address.created_at)))
+        assert [a.addressee for a in addresses] == ["Ada Lovelace", "Grace Hopper"]
+
+
 def test_attempt_cap_blocks_correct_code(client, mailer):
     csrf = csrf_from(client.get("/").text)
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
