@@ -15,6 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
+    MappedColumn,
     Session,
     mapped_column,
     relationship,
@@ -48,7 +49,11 @@ class AddressMixin:
     country: Mapped[str] = mapped_column(String(120))
 
 
-ADDRESS_FIELDS = tuple(AddressMixin.__annotations__)
+ADDRESS_FIELDS = tuple(
+    name
+    for name, attribute in vars(AddressMixin).items()
+    if isinstance(attribute, MappedColumn)
+)
 """The address column names, in declaration order."""
 
 
@@ -276,14 +281,17 @@ def register_user(
     return user
 
 
+def enable_foreign_keys(dbapi_connection: object, _record: object) -> None:
+    """Connect listener: turn SQLite foreign key enforcement on."""
+    cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
 def build_engine(url: str, **kwargs: object) -> Engine:
-    """Engine with SQLite foreign key enforcement on every connection."""
+    """Engine for the URL, with SQLite foreign key enforcement on every
+    connection to a SQLite database."""
     engine = create_engine(url, **kwargs)
-
-    @event.listens_for(engine, "connect")
-    def enable_foreign_keys(dbapi_connection: object, _record: object) -> None:
-        cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
+    if engine.dialect.name == "sqlite":
+        event.listens_for(engine, "connect")(enable_foreign_keys)
     return engine

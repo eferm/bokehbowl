@@ -66,6 +66,10 @@ ranges. On other hosting, set it to the address the platform's proxy connects
 from. The client IP feeds the per-address throttles on admin login, code
 requests, and code submissions.
 
+Those throttles count in memory, in the process that serves the request, so
+each cap holds per worker. The container runs one uvicorn worker; a deployment
+that adds workers multiplies the caps by the worker count.
+
 For a Cloudflare proxy, use Full (strict) TLS with an origin certificate, or use
 a Cloudflare Tunnel. A rate-limiting rule for `POST /signup`, `POST /login`,
 `POST /signup/verify`, `POST /login/verify`, and `POST /admin/login` adds edge
