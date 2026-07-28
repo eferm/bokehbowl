@@ -1,7 +1,9 @@
 import re
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from bokehbowl.db import Address, Mailpiece, NormalizedAddress, User, utcnow
@@ -598,3 +600,33 @@ def test_csv_export_neutralizes_formula_cells(client, mailer):
     assert response.status_code == 200
     assert "'=HYPERLINK" in response.text
     assert ",=HYPERLINK" not in response.text
+
+
+def test_the_database_admits_one_mailpiece_per_user_per_edition(client, mailer):
+    """Two clicks can both read the edition as unsent before either writes. The
+    UNIQUE constraint is what holds the second one out."""
+    sign_up_and_verify(client, mailer)
+    csrf = admin_login(client)
+    normalize_current_address(client, csrf)
+    detail_url = create_edition(client, csrf)
+    user_id = sole_user_id(client)
+    normalized_id = normalized_address_id_from(client.get(detail_url).text)
+    client.post(
+        f"{detail_url}/send/{user_id}",
+        data={"csrf": csrf, "normalized_address_id": normalized_id},
+    )
+
+    with Session(client.app.state.engine) as db:
+        sent = db.scalars(select(Mailpiece)).one()
+        db.add(
+            Mailpiece(
+                edition_id=sent.edition_id,
+                user_id=sent.user_id,
+                normalized_address_id=sent.normalized_address_id,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.commit()
+
+    with Session(client.app.state.engine) as db:
+        assert len(db.scalars(select(Mailpiece)).all()) == 1
