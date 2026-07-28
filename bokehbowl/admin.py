@@ -23,8 +23,7 @@ from bokehbowl.db import (
     User,
     UserSession,
     latest_address,
-    newest_normalization,
-    subscribed,
+    latest_normalized_address,
     utcnow,
 )
 from bokehbowl.web import AddressForm, Db, Templates
@@ -280,7 +279,11 @@ def export(db: Db, _: AdminOnly, table: str = "users"):
 
 def eligible_users(db: Session) -> list[User]:
     """Everyone an edition may be sent to: still subscribed."""
-    return list(db.scalars(select(User).where(subscribed()).order_by(User.created_at)))
+    return list(
+        db.scalars(
+            select(User).where(User.unsubscribed_at.is_(None)).order_by(User.created_at)
+        )
+    )
 
 
 def mailpieces_of(db: Session, edition_id: str) -> list[Mailpiece]:
@@ -308,16 +311,16 @@ def unsent_users(db: Session, edition_id: str) -> list[Recipient]:
         if user.id in sent_ids:
             continue
         address = latest_address(db, user.id)
-        rows.append((user, address, newest_normalization(db, address)))
+        rows.append((user, address, latest_normalized_address(db, address)))
     return rows
 
 
 def ready(rows: list[Recipient]) -> list[ReadyRecipient]:
     """Recipients an envelope can be printed for."""
     return [
-        (user, address, normalization)
-        for user, address, normalization in rows
-        if normalization is not None
+        (user, address, normalized_address)
+        for user, address, normalized_address in rows
+        if normalized_address is not None
     ]
 
 
@@ -325,8 +328,8 @@ def unreviewed(rows: list[Recipient]) -> list[tuple[User, Address]]:
     """Recipients whose current address awaits review."""
     return [
         (user, address)
-        for user, address, normalization in rows
-        if normalization is None
+        for user, address, normalized_address in rows
+        if normalized_address is None
     ]
 
 
@@ -414,8 +417,10 @@ def undo_mailpiece(db: Db, mailpiece: MailpieceById):
 def export_labels(db: Db, edition: EditionById):
     columns = list(ADDRESS_FIELDS)
     rows = [
-        [getattr(normalization, column) for column in columns]
-        for _, _, normalization in ready(pending(edition, unsent_users(db, edition.id)))
+        [getattr(normalized_address, column) for column in columns]
+        for _, _, normalized_address in ready(
+            pending(edition, unsent_users(db, edition.id))
+        )
     ]
     return csv_response(f"edition-{edition.id}-to-send.csv", columns, rows)
 
@@ -433,7 +438,7 @@ def normalize_form(
         "normalize.html",
         {
             "address": address,
-            "current": newest_normalization(db, address) or address,
+            "current": latest_normalized_address(db, address) or address,
             "edition": edition,
         },
     )

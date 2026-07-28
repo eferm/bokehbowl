@@ -4,10 +4,8 @@ from datetime import UTC, datetime
 from uuid6 import uuid7
 
 from sqlalchemy import (
-    ColumnElement,
     Engine,
     ForeignKey,
-    ScalarResult,
     String,
     UniqueConstraint,
     create_engine,
@@ -86,7 +84,7 @@ class UserSession(Base):
 
 class Address(AddressMixin, Base):
     """One postal address a user entered. Append-only: an edit inserts a new
-    row; the newest row is current."""
+    row; the latest row is current."""
 
     __tablename__ = "addresses"
 
@@ -103,8 +101,8 @@ class Address(AddressMixin, Base):
 
 class NormalizedAddress(AddressMixin, Base):
     """A print version of one address row, filed by the operator — approved as
-    entered or edited. Append-only: envelopes print the newest normalized row for
-    their address, and an address is sendable once it has one."""
+    entered or edited. Append-only: envelopes print the latest normalized row
+    for their address, and an address is sendable once it has one."""
 
     __tablename__ = "normalized_addresses"
 
@@ -176,26 +174,20 @@ class AdminSession(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
-def _newest_address(
-    db: Session, *conditions: ColumnElement[bool]
-) -> ScalarResult[Address]:
-    """The newest address matching the conditions, with created_at ties broken
-    on id."""
+def latest_address(db: Session, user_id: str) -> Address:
+    """The user's latest address, created_at ties broken on id. Every user has
+    one: registration records it."""
     return db.scalars(
         select(Address)
-        .where(*conditions)
+        .where(Address.user_id == user_id)
         .order_by(Address.created_at.desc(), Address.id.desc())
         .limit(1)
-    )
+    ).one()
 
 
-def latest_address(db: Session, user_id: str) -> Address:
-    """The user's newest address. Every user has one: registration records
-    it."""
-    return _newest_address(db, Address.user_id == user_id).one()
-
-
-def newest_normalization(db: Session, address: Address) -> NormalizedAddress | None:
+def latest_normalized_address(
+    db: Session, address: Address
+) -> NormalizedAddress | None:
     """The address's current print version, once the operator has filed one.
     An address with a print version is ready to send; envelopes print it."""
     return db.scalars(
@@ -219,7 +211,7 @@ def record_address(
     country: str,
 ) -> None:
     """Append an address unless the user's latest address is identical."""
-    current = _newest_address(db, Address.user_id == user_id).first()
+    current = latest_address(db, user_id)
     incoming = (
         addressee,
         address_line1,
@@ -229,7 +221,7 @@ def record_address(
         postal_code,
         country,
     )
-    if current is not None and incoming == (
+    if incoming == (
         current.addressee,
         current.address_line1,
         current.address_line2,
@@ -282,11 +274,6 @@ def register_user(
         )
     )
     return user
-
-
-def subscribed() -> ColumnElement[bool]:
-    """The eligibility condition for receiving mail."""
-    return User.unsubscribed_at.is_(None)
 
 
 def build_engine(url: str, **kwargs: object) -> Engine:

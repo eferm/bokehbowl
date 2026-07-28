@@ -102,9 +102,9 @@ deliberately.
   form until verification creates the user and their first address in one
   transaction.
 - **addresses** — every postal address a user entered, append-only; the
-  newest row is current and is what the account page shows.
+  latest row is current and is what the account page shows.
 - **normalized_addresses** — operator-approved print versions, each pinned to
-  one address row, append-only. An envelope prints the newest normalized
+  one address row, append-only. An envelope prints the latest normalized
   version of its address; an address with one is ready to send.
 - **editions** — one print run (a postcard design, a photo, a letter).
 - **mailpieces** — one physical piece of mail: an edition sent to one user,
@@ -122,8 +122,8 @@ Each invariant lives at a named enforcement layer:
 - Every envelope prints an operator-approved form —
   `mailpieces.normalized_address_id` is non-null, and the mark-sent handler
   requires a normalized row belonging to the user before writing.
-- A normalization prints only while its raw address is the user's newest — each
-  normalized row is pinned to one address row by `address_id`.
+- A normalized address prints only while its raw address is the user's
+  latest — each normalized row is pinned to one address row by `address_id`.
 - Login codes are single-use — consuming a code deletes it.
 - Foreign keys hold at runtime, and deleting a user cascades down the
   user-rooted chain — the engine factory turns `PRAGMA foreign_keys` on for

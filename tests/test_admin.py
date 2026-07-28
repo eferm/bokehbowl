@@ -375,7 +375,7 @@ def test_mark_sent_rejects_unsubscribed_user(client, mailer):
         assert db.scalars(select(Mailpiece)).all() == []
 
 
-def test_mark_sent_with_an_unknown_normalization_is_404(client, mailer):
+def test_mark_sent_with_an_unknown_normalized_address_is_404(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
     user_id = sole_user_id(client)
@@ -450,16 +450,18 @@ def test_approve_files_the_shown_address_as_the_print_version(client, mailer):
     assert response.headers["location"] == detail_url
 
     with Session(client.app.state.engine) as db:
-        normalization = db.scalars(select(NormalizedAddress)).one()
-        assert normalization.addressee == "Ada Lovelace"
-        assert normalization.address_line1 == "12 Analytical Way"
-        assert normalization.postal_code == "N1 9GU"
+        normalized_address = db.scalars(select(NormalizedAddress)).one()
+        assert normalized_address.addressee == "Ada Lovelace"
+        assert normalized_address.address_line1 == "12 Analytical Way"
+        assert normalized_address.postal_code == "N1 9GU"
     detail = client.get(detail_url).text
     assert "Needs review" not in detail
     assert "To send (1)" in detail
 
 
-def test_mark_sent_with_a_normalization_of_another_users_address_is_404(client, mailer):
+def test_mark_sent_with_a_normalized_address_of_another_users_address_is_404(
+    client, mailer
+):
     sign_up_and_verify(client, mailer)
     csrf = csrf_from(client.get("/").text)
     grace = {**SIGNUP_FORM, "email": "grace@example.com", "name": "Grace Hopper"}
@@ -494,19 +496,19 @@ def test_mark_sent_with_a_normalization_of_another_users_address_is_404(client, 
     )
     assert response.status_code == 303
     with Session(client.app.state.engine) as db:
-        graces_normalization = db.scalars(select(NormalizedAddress.id)).one()
+        graces_normalized_address = db.scalars(select(NormalizedAddress.id)).one()
 
     detail_url = create_edition(client, admin_csrf)
     response = client.post(
         f"{detail_url}/send/{ada_id}",
-        data={"csrf": admin_csrf, "normalized_address_id": graces_normalization},
+        data={"csrf": admin_csrf, "normalized_address_id": graces_normalized_address},
     )
     assert response.status_code == 404
     with Session(client.app.state.engine) as db:
         assert db.scalars(select(Mailpiece)).all() == []
 
 
-def test_new_address_supersedes_the_old_rows_normalization(client, mailer):
+def test_new_address_supersedes_the_old_rows_normalized_address(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
     normalize_current_address(client, csrf, address_line1="12 Analytical Way, Flat 3")
@@ -521,7 +523,7 @@ def test_new_address_supersedes_the_old_rows_normalization(client, mailer):
     assert "Flat 3" not in labels
 
 
-def test_renormalizing_appends_and_the_newest_normalization_wins(client, mailer):
+def test_renormalizing_appends_and_the_latest_normalized_address_wins(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
     normalize_current_address(client, csrf, address_line1="12 Analytical Way, Flat 3")

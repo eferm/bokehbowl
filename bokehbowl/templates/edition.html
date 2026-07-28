@@ -21,10 +21,10 @@
           <button type="submit">Approve</button>
         </form>
 {%- endmacro %}
-{% macro mark_sent_form(edition, user, normalization, csrf) %}
+{% macro mark_sent_form(edition, user, normalized_address, csrf) %}
         <form method="post" action="/admin/editions/{{ edition.id }}/send/{{ user.id }}">
           <input type="hidden" name="csrf" value="{{ csrf }}">
-          <input type="hidden" name="normalized_address_id" value="{{ normalization.id }}">
+          <input type="hidden" name="normalized_address_id" value="{{ normalized_address.id }}">
           <button type="submit">Mark sent</button>
         </form>
 {%- endmacro %}
@@ -65,13 +65,13 @@
     <tr><th>Name</th><th>Address</th><th>Email</th><th></th><th></th></tr>
   </thead>
   <tbody>
-    {% for user, address, normalization in ready %}
+    {% for user, address, normalized_address in ready %}
     <tr>
-      <td>{{ normalization.addressee }}</td>
-      <td>{{ address_lines(normalization) }}</td>
+      <td>{{ normalized_address.addressee }}</td>
+      <td>{{ address_lines(normalized_address) }}</td>
       <td>{{ user.email }}</td>
       <td>{{ normalize_link(edition, address) }}</td>
-      <td>{{ mark_sent_form(edition, user, normalization, csrf) }}</td>
+      <td>{{ mark_sent_form(edition, user, normalized_address, csrf) }}</td>
     </tr>
     {% else %}
     <tr><td colspan="5">Nobody left to send to.</td></tr>
@@ -111,13 +111,13 @@
       <tr><th>Name</th><th>Address</th><th>Signed up</th><th></th><th></th></tr>
     </thead>
     <tbody>
-      {% for user, address, normalization in late_ready %}
+      {% for user, address, normalized_address in late_ready %}
       <tr>
-        <td>{{ normalization.addressee }}</td>
-        <td>{{ address_lines(normalization) }}</td>
+        <td>{{ normalized_address.addressee }}</td>
+        <td>{{ address_lines(normalized_address) }}</td>
         <td>{{ user.created_at.date() }}</td>
         <td>{{ normalize_link(edition, address) }}</td>
-        <td>{{ mark_sent_form(edition, user, normalization, csrf) }}</td>
+        <td>{{ mark_sent_form(edition, user, normalized_address, csrf) }}</td>
       </tr>
       {% endfor %}
     </tbody>
