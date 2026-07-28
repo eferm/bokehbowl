@@ -1,6 +1,7 @@
 import base64
 import json
 from datetime import timedelta
+from email.message import EmailMessage
 
 import pytest
 from fastapi.testclient import TestClient
@@ -493,3 +494,69 @@ def test_capped_signup_creates_no_row(client, mailer, monkeypatch):
     with Session(client.app.state.engine) as db:
         assert db.scalars(select(User)).all() == []
         assert db.scalars(select(Address)).all() == []
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("name", "Ada\x00 Lovelace"),
+        ("name", "Ada\x7f"),
+        ("city", "Lon\u200bdon"),
+    ],
+)
+def test_signup_rejects_a_field_with_a_control_character(client, mailer, field, value):
+    csrf = csrf_from(client.get("/").text)
+    response = client.post("/signup", data={**SIGNUP_FORM, field: value, "csrf": csrf})
+    assert response.status_code == 422
+    assert mailer.sent == []
+
+
+def test_signup_folds_pasted_whitespace_into_single_spaces(client, mailer):
+    """A pasted address carries line breaks, tabs, and non-breaking spaces. Each
+    folds to a plain space, leaving one line for the row and for the header the
+    operator notification composes."""
+    form = {
+        **SIGNUP_FORM,
+        "name": "Ada\r\nBcc: eve@example.com",
+        "city": "Milton\xa0Keynes",
+        "postal_code": "N1\t9GU",
+        "address_line1": "12  Analytical  Way",
+    }
+    csrf = csrf_from(client.get("/").text)
+    client.post("/signup", data={**form, "csrf": csrf})
+    response = client.post(
+        "/signup/verify",
+        data={**form, "csrf": csrf, "code": mailer.last_code()},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+    with Session(client.app.state.engine) as db:
+        address = db.scalars(select(Address)).one()
+        assert address.addressee == "Ada Bcc: eve@example.com"
+        assert address.city == "Milton Keynes"
+        assert address.postal_code == "N1 9GU"
+        assert address.address_line1 == "12 Analytical Way"
+    subject = mailer.sent[-1][1]
+    assert subject == "New signup: Ada Bcc: eve@example.com"
+    EmailMessage()["Subject"] = subject
+
+
+def test_signup_keeps_non_ascii_names_and_addresses(client, mailer):
+    form = {**SIGNUP_FORM, "name": "Åsa Öberg", "city": "Malmö", "country": "Sverige"}
+    csrf = csrf_from(client.get("/").text)
+    client.post("/signup", data={**form, "csrf": csrf})
+    response = client.post(
+        "/signup/verify",
+        data={**form, "csrf": csrf, "code": mailer.last_code()},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+    with Session(client.app.state.engine) as db:
+        address = db.scalars(select(Address)).one()
+        assert address.addressee == "Åsa Öberg"
+        assert address.city == "Malmö"
+    subject = mailer.sent[-1][1]
+    assert subject == "New signup: Åsa Öberg"
+    EmailMessage()["Subject"] = subject

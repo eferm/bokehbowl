@@ -94,7 +94,8 @@ NormalizedEmail = Annotated[EmailStr, BeforeValidator(normalize_email)]
 
 
 class AddressForm(BaseModel):
-    """A user's name and postal address, whitespace-stripped on entry."""
+    """A user's name and postal address: one line of printable text per field,
+    with runs of whitespace folded to single spaces."""
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -105,6 +106,16 @@ class AddressForm(BaseModel):
     region: str | None = Field(default=None, max_length=120)
     postal_code: str = Field(max_length=20)
     country: str = Field(max_length=120)
+
+    @field_validator("*")
+    @classmethod
+    def single_line(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        folded = " ".join(value.split())
+        if not folded.isprintable():
+            raise ValueError("holds a control character")
+        return folded
 
     @field_validator("address_line2", "region")
     @classmethod
