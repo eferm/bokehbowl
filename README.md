@@ -156,7 +156,9 @@ Each invariant lives at a named enforcement layer:
 uv run pytest
 uv run ruff check .
 uv run ruff format .
+uv audit
 uv run alembic revision --autogenerate -m "..."
 ```
 
-Run the final command after changing the SQLAlchemy models.
+`uv audit` checks the locked dependencies against known advisories; run it when
+updating `uv.lock`. Run the final command after changing the SQLAlchemy models.
