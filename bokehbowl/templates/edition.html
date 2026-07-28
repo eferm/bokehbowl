@@ -43,13 +43,13 @@
     <tr><th>Name</th><th>Address</th><th>Email</th><th></th><th></th></tr>
   </thead>
   <tbody>
-    {% for user, address in needs_review %}
+    {% for recipient in needs_review %}
     <tr>
-      <td>{{ address.addressee }}</td>
-      <td>{{ address_lines(address) }}</td>
-      <td>{{ user.email }}</td>
-      <td>{{ normalize_link(edition, address) }}</td>
-      <td>{{ approve_form(edition, address, csrf) }}</td>
+      <td>{{ recipient.address.addressee }}</td>
+      <td>{{ address_lines(recipient.address) }}</td>
+      <td>{{ recipient.user.email }}</td>
+      <td>{{ normalize_link(edition, recipient.address) }}</td>
+      <td>{{ approve_form(edition, recipient.address, csrf) }}</td>
     </tr>
     {% endfor %}
   </tbody>
@@ -65,13 +65,13 @@
     <tr><th>Name</th><th>Address</th><th>Email</th><th></th><th></th></tr>
   </thead>
   <tbody>
-    {% for user, address, normalized_address in to_send %}
+    {% for recipient in to_send %}
     <tr>
-      <td>{{ normalized_address.addressee }}</td>
-      <td>{{ address_lines(normalized_address) }}</td>
-      <td>{{ user.email }}</td>
-      <td>{{ normalize_link(edition, address) }}</td>
-      <td>{{ mark_sent_form(edition, user, normalized_address, csrf) }}</td>
+      <td>{{ recipient.normalized_address.addressee }}</td>
+      <td>{{ address_lines(recipient.normalized_address) }}</td>
+      <td>{{ recipient.user.email }}</td>
+      <td>{{ normalize_link(edition, recipient.address) }}</td>
+      <td>{{ mark_sent_form(edition, recipient.user, recipient.normalized_address, csrf) }}</td>
     </tr>
     {% else %}
     <tr><td colspan="5">Nobody left to send to.</td></tr>

@@ -3,6 +3,7 @@
 import csv
 import io
 import secrets
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Annotated
 
@@ -272,40 +273,57 @@ def mailpieces_of(db: Session, edition_id: str) -> list[Mailpiece]:
     )
 
 
-Recipient = tuple[User, Address, NormalizedAddress | None]
-"""A user, their current address, and its print version once one is filed."""
+@dataclass(frozen=True)
+class ReviewRecipient:
+    """A user whose current address awaits a print version."""
 
-ReadyRecipient = tuple[User, Address, NormalizedAddress]
-"""A recipient whose current address has a print version."""
+    user: User
+    address: Address
+
+
+@dataclass(frozen=True)
+class ReadyRecipient:
+    """A user whose current address has a print version, which an envelope to
+    them prints."""
+
+    user: User
+    address: Address
+    normalized_address: NormalizedAddress
+
+
+Recipient = ReviewRecipient | ReadyRecipient
+"""An unsent recipient, in the kind their current address makes them."""
 
 
 def unsent_recipients(db: Session, edition: Edition) -> list[Recipient]:
-    """Eligible users the edition has not gone to yet."""
+    """Eligible users the edition has not gone to yet, each as the kind their
+    current address makes them."""
     sent_ids = {mailpiece.user_id for mailpiece in mailpieces_of(db, edition.id)}
-    rows = []
+    recipients: list[Recipient] = []
     for user in eligible_users(db, edition):
         if user.id in sent_ids:
             continue
         address = latest_address(db, user.id)
-        rows.append((user, address, latest_normalized_address(db, address)))
-    return rows
+        normalized_address = latest_normalized_address(db, address)
+        recipients.append(
+            ReadyRecipient(user, address, normalized_address)
+            if normalized_address is not None
+            else ReviewRecipient(user, address)
+        )
+    return recipients
 
 
-def recipients_ready_to_send(rows: list[Recipient]) -> list[ReadyRecipient]:
+def recipients_ready_to_send(recipients: list[Recipient]) -> list[ReadyRecipient]:
     """Recipients whose current address has a print version."""
     return [
-        (user, address, normalized_address)
-        for user, address, normalized_address in rows
-        if normalized_address is not None
+        recipient for recipient in recipients if isinstance(recipient, ReadyRecipient)
     ]
 
 
-def recipients_needing_review(rows: list[Recipient]) -> list[tuple[User, Address]]:
+def recipients_needing_review(recipients: list[Recipient]) -> list[ReviewRecipient]:
     """Recipients whose current address awaits a print version."""
     return [
-        (user, address)
-        for user, address, normalized_address in rows
-        if normalized_address is None
+        recipient for recipient in recipients if isinstance(recipient, ReviewRecipient)
     ]
 
 
@@ -374,10 +392,8 @@ def delete_mailpiece(db: Db, mailpiece: MailpieceById):
 def export_labels(db: Db, edition: EditionById):
     columns = list(ADDRESS_FIELDS)
     rows = [
-        [getattr(normalized_address, column) for column in columns]
-        for _, _, normalized_address in recipients_ready_to_send(
-            unsent_recipients(db, edition)
-        )
+        [getattr(recipient.normalized_address, column) for column in columns]
+        for recipient in recipients_ready_to_send(unsent_recipients(db, edition))
     ]
     return csv_response(f"edition-{edition.id}-to-send.csv", columns, rows)
 
