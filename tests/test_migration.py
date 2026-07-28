@@ -318,6 +318,37 @@ def test_head_keeps_verified_users_and_drops_unverified(old_database):
     assert grace_print["created_at"] == DAY_3
 
 
+def test_head_stops_on_a_mailpiece_held_by_an_unverified_user(old_database):
+    """Charles never verified, so his rows stay behind and his mailpiece has
+    nowhere to land. The upgrade names it and leaves the database as it was."""
+    config, engine = old_database
+    command.upgrade(config, MID_REVISION)
+    with engine.begin() as conn:
+        insert(
+            conn,
+            "mailpieces",
+            [
+                {
+                    "id": "mp-charles",
+                    "edition_id": "m-1",
+                    "user_id": "charles",
+                    "address_id": "v-charles-1",
+                    "sent_at": DAY_4,
+                }
+            ],
+        )
+
+    with pytest.raises(RuntimeError, match="mp-charles"):
+        command.upgrade(config, "head")
+
+    assert by_id(engine, "SELECT * FROM users")["charles"]["verified_at"] is None
+    assert set(by_id(engine, "SELECT * FROM mailpieces")) == {
+        "mp-ada",
+        "mp-grace",
+        "mp-charles",
+    }
+
+
 def test_head_satisfies_every_foreign_key(old_database):
     config, engine = old_database
     command.upgrade(config, "head")

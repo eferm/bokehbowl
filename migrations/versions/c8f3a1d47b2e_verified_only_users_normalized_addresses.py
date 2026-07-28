@@ -1,8 +1,9 @@
 """verified-only users; normalized addresses
 
 Users exist only after verification: unverified user rows and their address
-rows are removed. Address rows with derived_from_id become normalized_addresses
-rows keyed to their parent. A
+rows are removed, and a mailpiece resting on one stops the upgrade. Address
+rows with derived_from_id become normalized_addresses rows keyed to their
+parent. A
 mailpiece pins the print version its envelope carried: one that pointed at
 a derived row takes it as normalized_address_id; one that pointed at a manual
 row gets a normalized_addresses copy of that row, filed at the send moment.
@@ -261,11 +262,31 @@ def _read_old_rows(bind) -> dict[str, list[dict]]:
         if s.user_id not in unverified_ids
     ]
     address_by_id = {a.id: a for a in old_addresses}
+    old_mailpieces = list(
+        bind.execute(
+            sa.text(
+                "SELECT id, edition_id, user_id, address_id, sent_at FROM mailpieces"
+            )
+        )
+    )
+    # Unverified users and their addresses stay behind, so a mailpiece resting on
+    # one has nowhere to land. Stop with the ids rather than write dangling rows.
+    stranded = sorted(
+        m.id
+        for m in old_mailpieces
+        if m.user_id in unverified_ids
+        or address_by_id[m.address_id].user_id in unverified_ids
+    )
+    if stranded:
+        raise RuntimeError(
+            f"Mailpieces held by unverified users: {', '.join(stranded)}. "
+            "Set verified_at on those users, or delete the mailpieces, then "
+            "run this migration again."
+        )
+
     printed_copy_of: dict[str, str] = {}
     mailpieces = []
-    for m in bind.execute(
-        sa.text("SELECT id, edition_id, user_id, address_id, sent_at FROM mailpieces")
-    ):
+    for m in old_mailpieces:
         if m.address_id in derived_to_parent:
             normalized_id = m.address_id
         elif m.address_id in printed_copy_of:
