@@ -5,10 +5,13 @@ from uuid6 import uuid7
 
 from sqlalchemy import (
     ColumnElement,
+    Engine,
     ForeignKey,
     ScalarResult,
     String,
     UniqueConstraint,
+    create_engine,
+    event,
     select,
 )
 from sqlalchemy.orm import (
@@ -34,16 +37,31 @@ class Base(DeclarativeBase):
     pass
 
 
+class AddressMixin:
+    """The components of a postal address. Each table that stores one inherits
+    these columns, so the shape is identical everywhere."""
+
+    addressee: Mapped[str] = mapped_column(String(200))
+    address_line1: Mapped[str] = mapped_column(String(200))
+    address_line2: Mapped[str | None] = mapped_column(String(200))
+    city: Mapped[str] = mapped_column(String(120))
+    region: Mapped[str | None] = mapped_column(String(120))
+    postal_code: Mapped[str] = mapped_column(String(20))
+    country: Mapped[str] = mapped_column(String(120))
+
+
+ADDRESS_FIELDS = tuple(AddressMixin.__annotations__)
+"""The address column names, in declaration order."""
+
+
 class User(Base):
-    """A person who signed up: an email identity and two lifecycle timestamps.
-    verified_at set means they proved the email; unsubscribed_at set means they
-    left. Both unset is a signup awaiting verification."""
+    """A verified email identity. created_at is the verification moment;
+    unsubscribed_at set means mail stops."""
 
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
-    verified_at: Mapped[datetime | None]
     unsubscribed_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
@@ -60,33 +78,45 @@ class UserSession(Base):
     __tablename__ = "user_sessions"
 
     token: Mapped[str] = mapped_column(String(43), primary_key=True)
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     user: Mapped[User] = relationship(back_populates="sessions")
 
 
-class Address(Base):
-    """One postal address a user has had. Append-only: an edit inserts a new row.
-    derived_from_id links a validated address to the manual entry it corrects."""
+class Address(AddressMixin, Base):
+    """One postal address a user entered. Append-only: an edit inserts a new
+    row; the newest row is current."""
 
     __tablename__ = "addresses"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-    addressee: Mapped[str] = mapped_column(String(200))
-    address_line1: Mapped[str] = mapped_column(String(200))
-    address_line2: Mapped[str | None] = mapped_column(String(200))
-    city: Mapped[str] = mapped_column(String(120))
-    region: Mapped[str | None] = mapped_column(String(120))
-    postal_code: Mapped[str] = mapped_column(String(20))
-    country: Mapped[str] = mapped_column(String(120))
-    derived_from_id: Mapped[str | None] = mapped_column(
-        ForeignKey("addresses.id"), index=True
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=new_id, sort_order=-2
     )
-    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, sort_order=-1
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, sort_order=1)
 
     user: Mapped[User] = relationship(back_populates="addresses")
+
+
+class NormalizedAddress(AddressMixin, Base):
+    """A print version of one address row, filed by the operator — approved as
+    entered or edited. Append-only: envelopes print the newest normalized row for
+    their address, and an address is sendable once it has one."""
+
+    __tablename__ = "normalized_addresses"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=new_id, sort_order=-2
+    )
+    address_id: Mapped[str] = mapped_column(
+        ForeignKey("addresses.id", ondelete="CASCADE"), index=True, sort_order=-1
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, sort_order=1)
+
+    address: Mapped[Address] = relationship()
 
 
 class Edition(Base):
@@ -103,21 +133,26 @@ class Edition(Base):
 
 
 class Mailpiece(Base):
-    """One physical piece of mail: an edition sent to one user, at the exact
-    address written on it."""
+    """One physical piece of mail: an edition sent to one user.
+    normalized_address_id is the print version the envelope carried; the address
+    of record at send time is that row's parent."""
 
     __tablename__ = "mailpieces"
     __table_args__ = (UniqueConstraint("edition_id", "user_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     edition_id: Mapped[str] = mapped_column(ForeignKey("editions.id"), index=True)
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-    address_id: Mapped[str] = mapped_column(ForeignKey("addresses.id"))
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    normalized_address_id: Mapped[str] = mapped_column(
+        ForeignKey("normalized_addresses.id", ondelete="CASCADE")
+    )
     sent_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     edition: Mapped[Edition] = relationship(back_populates="mailpieces")
     user: Mapped[User] = relationship(back_populates="mailpieces")
-    address: Mapped[Address] = relationship()
+    normalized_address: Mapped[NormalizedAddress] = relationship()
 
 
 class LoginCode(Base):
@@ -154,24 +189,21 @@ def _newest_address(
     )
 
 
-def latest_address(db: Session, user_id: str) -> Address | None:
-    """The address an envelope to the user would use: the newest validated
-    correction of their newest manual entry, or that entry itself."""
-    manual = _newest_address(
-        db, Address.user_id == user_id, Address.derived_from_id.is_(None)
+def latest_address(db: Session, user_id: str) -> Address:
+    """The user's newest address. Every user has one: registration records
+    it."""
+    return _newest_address(db, Address.user_id == user_id).one()
+
+
+def newest_normalization(db: Session, address: Address) -> NormalizedAddress | None:
+    """The address's current print version, once the operator has filed one.
+    An address with a print version is ready to send; envelopes print it."""
+    return db.scalars(
+        select(NormalizedAddress)
+        .where(NormalizedAddress.address_id == address.id)
+        .order_by(NormalizedAddress.created_at.desc(), NormalizedAddress.id.desc())
+        .limit(1)
     ).first()
-    if manual is None:
-        return None
-    derived = _newest_address(db, Address.derived_from_id == manual.id).first()
-    return derived or manual
-
-
-def latest_manual_address(db: Session, user_id: str) -> Address:
-    """The user's newest self-entered address — what the account page shows.
-    Every user has one: signup records it."""
-    return _newest_address(
-        db, Address.user_id == user_id, Address.derived_from_id.is_(None)
-    ).one()
 
 
 def record_address(
@@ -186,10 +218,8 @@ def record_address(
     postal_code: str,
     country: str,
 ) -> None:
-    """Append a manual address unless the latest manual address is identical."""
-    current = _newest_address(
-        db, Address.user_id == user_id, Address.derived_from_id.is_(None)
-    ).first()
+    """Append an address unless the user's latest address is identical."""
+    current = _newest_address(db, Address.user_id == user_id).first()
     incoming = (
         addressee,
         address_line1,
@@ -221,3 +251,52 @@ def record_address(
             country=country,
         )
     )
+
+
+def register_user(
+    db: Session,
+    email: str,
+    *,
+    addressee: str,
+    address_line1: str,
+    address_line2: str | None,
+    city: str,
+    region: str | None,
+    postal_code: str,
+    country: str,
+) -> User:
+    """Create a user and their first address, in one transaction."""
+    user = User(email=email)
+    db.add(user)
+    db.flush()
+    db.add(
+        Address(
+            user_id=user.id,
+            addressee=addressee,
+            address_line1=address_line1,
+            address_line2=address_line2,
+            city=city,
+            region=region,
+            postal_code=postal_code,
+            country=country,
+        )
+    )
+    return user
+
+
+def subscribed() -> ColumnElement[bool]:
+    """The eligibility condition for receiving mail."""
+    return User.unsubscribed_at.is_(None)
+
+
+def build_engine(url: str, **kwargs: object) -> Engine:
+    """Engine with SQLite foreign key enforcement on every connection."""
+    engine = create_engine(url, **kwargs)
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(dbapi_connection: object, _record: object) -> None:
+        cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    return engine

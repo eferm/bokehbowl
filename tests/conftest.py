@@ -2,12 +2,11 @@ import re
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
 from bokehbowl.app import create_app
 from bokehbowl.config import AppConfig, ConsoleMail
-from bokehbowl.db import Base
+from bokehbowl.db import Base, build_engine
 
 
 ADMIN_PASSWORD = "test-admin-password"
@@ -36,7 +35,7 @@ def mailer():
 @pytest.fixture()
 def make_client(mailer):
     def make() -> TestClient:
-        engine = create_engine(
+        engine = build_engine(
             "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
         )
         Base.metadata.create_all(engine)
@@ -85,13 +84,11 @@ SIGNUP_FORM = {
 
 def sign_up_and_verify(client, mailer) -> None:
     csrf = csrf_from(client.get("/").text)
-    response = client.post(
-        "/signup", data={**SIGNUP_FORM, "csrf": csrf}, follow_redirects=True
-    )
+    response = client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
     assert response.status_code == 200
     response = client.post(
-        "/verify",
-        data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
+        "/signup/verify",
+        data={**SIGNUP_FORM, "csrf": csrf, "code": mailer.last_code()},
         follow_redirects=False,
     )
     assert response.status_code == 303

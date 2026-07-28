@@ -27,8 +27,8 @@ def test_first_signup_shows_confirmation(client, mailer):
     csrf = csrf_from(client.get("/").text)
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
     response = client.post(
-        "/verify",
-        data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
+        "/signup/verify",
+        data={**SIGNUP_FORM, "csrf": csrf, "code": mailer.last_code()},
         follow_redirects=True,
     )
     assert "You're on the list." in response.text
@@ -76,7 +76,7 @@ def test_wrong_code_rejected(client, mailer):
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
     wrong = "000000" if mailer.last_code() != "000000" else "111111"
     response = client.post(
-        "/verify", data={"csrf": csrf, "email": "ada@example.com", "code": wrong}
+        "/signup/verify", data={**SIGNUP_FORM, "csrf": csrf, "code": wrong}
     )
     assert response.status_code == 422
     assert client.get("/account", follow_redirects=False).status_code == 303
@@ -123,7 +123,7 @@ def test_unsubscribe_and_resubscribe(client, mailer):
 
     client.post("/login", data={"csrf": csrf, "email": "ada@example.com"})
     client.post(
-        "/verify",
+        "/login/verify",
         data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
     )
     account = client.get("/account")
@@ -188,7 +188,7 @@ def test_verification_prunes_expired_user_sessions(client, mailer):
     csrf = csrf_from(client.get("/").text)
     client.post("/login", data={"csrf": csrf, "email": "ada@example.com"})
     client.post(
-        "/verify",
+        "/login/verify",
         data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
     )
 
@@ -205,8 +205,9 @@ def test_signup_state_survives_mailer_failure(client, mailer, monkeypatch):
     with pytest.raises(RuntimeError):
         client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
     with Session(client.app.state.engine) as db:
-        assert db.scalars(select(User)).one()
         assert db.scalars(select(LoginCode)).one()
+        assert db.scalars(select(User)).all() == []
+        assert db.scalars(select(Address)).all() == []
 
 
 def test_signup_rejects_address_lists(client, mailer):
@@ -227,7 +228,7 @@ def test_stale_cookie_cannot_log_out_new_session(client, mailer):
     client.post("/logout", data={"csrf": csrf})
     client.post("/login", data={"csrf": csrf, "email": "ada@example.com"})
     client.post(
-        "/verify",
+        "/login/verify",
         data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
     )
     fresh = dict(client.cookies)
@@ -276,56 +277,48 @@ def test_code_volume_is_capped(client, mailer, monkeypatch):
     assert len(mailer.sent) == 2
 
 
-def test_unverified_signup_data_is_overwritten(client, mailer):
+def test_repeat_signup_verifies_with_the_latest_payload(client, mailer):
     csrf = csrf_from(client.get("/").text)
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
+    revised = {
+        **SIGNUP_FORM,
+        "name": "Grace Hopper",
+        "address_line1": "1 Navy Yard",
+        "city": "Arlington",
+    }
+    client.post("/signup", data={**revised, "csrf": csrf})
+    with Session(client.app.state.engine) as db:
+        assert db.scalars(select(User)).all() == []
+        assert db.scalars(select(Address)).all() == []
     client.post(
-        "/signup",
-        data={
-            **SIGNUP_FORM,
-            "csrf": csrf,
-            "name": "Grace Hopper",
-            "address_line1": "1 Navy Yard",
-            "city": "Arlington",
-        },
+        "/signup/verify",
+        data={**revised, "csrf": csrf, "code": mailer.last_code()},
     )
     with Session(client.app.state.engine) as db:
         assert db.scalars(select(User)).one()
-        addresses = list(db.scalars(select(Address).order_by(Address.created_at)))
-        assert [a.addressee for a in addresses] == ["Ada Lovelace", "Grace Hopper"]
-        assert addresses[1].address_line1 == "1 Navy Yard"
-        assert addresses[1].city == "Arlington"
+        address = db.scalars(select(Address)).one()
+        assert address.addressee == "Grace Hopper"
+        assert address.address_line1 == "1 Navy Yard"
+        assert address.city == "Arlington"
+
+
+def test_existing_user_signup_adds_no_address(client, mailer):
+    sign_up_and_verify(client, mailer)
+    csrf = csrf_from(client.get("/").text)
+    revised = {
+        **SIGNUP_FORM,
+        "name": "Someone Else",
+        "address_line1": "99 Other Road",
+    }
+    client.post("/signup", data={**revised, "csrf": csrf})
     client.post(
-        "/verify",
-        data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
+        "/signup/verify",
+        data={**revised, "csrf": csrf, "code": mailer.last_code()},
     )
-    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf, "name": "Someone Else"})
     with Session(client.app.state.engine) as db:
         assert db.scalars(select(User)).one()
-        addresses = list(db.scalars(select(Address).order_by(Address.created_at)))
-        assert [a.addressee for a in addresses] == ["Ada Lovelace", "Grace Hopper"]
-
-
-def test_unsubscribed_signup_still_records_address(client, mailer):
-    csrf = csrf_from(client.get("/").text)
-    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
-    with Session(client.app.state.engine) as db:
-        user = db.scalars(select(User)).one()
-        user.unsubscribed_at = utcnow()
-        db.commit()
-    client.post(
-        "/signup",
-        data={
-            **SIGNUP_FORM,
-            "csrf": csrf,
-            "name": "Grace Hopper",
-            "address_line1": "1 Navy Yard",
-            "city": "Arlington",
-        },
-    )
-    with Session(client.app.state.engine) as db:
-        addresses = list(db.scalars(select(Address).order_by(Address.created_at)))
-        assert [a.addressee for a in addresses] == ["Ada Lovelace", "Grace Hopper"]
+        address = db.scalars(select(Address)).one()
+        assert address.addressee == "Ada Lovelace"
 
 
 def test_attempt_cap_blocks_correct_code(client, mailer):
@@ -335,11 +328,11 @@ def test_attempt_cap_blocks_correct_code(client, mailer):
     wrong = "000000" if correct != "000000" else "111111"
     for _ in range(5):
         response = client.post(
-            "/verify", data={"csrf": csrf, "email": "ada@example.com", "code": wrong}
+            "/signup/verify", data={**SIGNUP_FORM, "csrf": csrf, "code": wrong}
         )
         assert response.status_code == 422
     response = client.post(
-        "/verify", data={"csrf": csrf, "email": "ada@example.com", "code": correct}
+        "/signup/verify", data={**SIGNUP_FORM, "csrf": csrf, "code": correct}
     )
     assert response.status_code == 422
 
@@ -349,7 +342,7 @@ def test_consumed_code_cannot_be_replayed(client, mailer):
     code = mailer.last_code()
     csrf = csrf_from(client.get("/account").text)
     response = client.post(
-        "/verify", data={"csrf": csrf, "email": "ada@example.com", "code": code}
+        "/signup/verify", data={**SIGNUP_FORM, "csrf": csrf, "code": code}
     )
     assert response.status_code == 422
 
@@ -365,4 +358,5 @@ def test_capped_signup_creates_no_row(client, mailer, monkeypatch):
     )
     assert response.status_code == 429
     with Session(client.app.state.engine) as db:
-        assert len(db.scalars(select(User)).all()) == 1
+        assert db.scalars(select(User)).all() == []
+        assert db.scalars(select(Address)).all() == []

@@ -4,10 +4,27 @@
         {{ address.city }}{% if address.region %}, {{ address.region }}{% endif %} {{ address.postal_code }}<br>
         {{ address.country }}
 {%- endmacro %}
-{% macro mark_sent_form(edition, user, address, csrf) %}
+{% macro normalize_link(edition, address) %}
+        <a class="button-link" href="/admin/addresses/{{ address.id }}/normalize?edition={{ edition.id }}">Normalize</a>
+{%- endmacro %}
+{% macro approve_form(edition, address, csrf) %}
+        <form method="post" action="/admin/addresses/{{ address.id }}/normalize">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="edition" value="{{ edition.id }}">
+          <input type="hidden" name="name" value="{{ address.addressee }}">
+          <input type="hidden" name="address_line1" value="{{ address.address_line1 }}">
+          <input type="hidden" name="address_line2" value="{{ address.address_line2 or '' }}">
+          <input type="hidden" name="city" value="{{ address.city }}">
+          <input type="hidden" name="region" value="{{ address.region or '' }}">
+          <input type="hidden" name="postal_code" value="{{ address.postal_code }}">
+          <input type="hidden" name="country" value="{{ address.country }}">
+          <button type="submit">Approve</button>
+        </form>
+{%- endmacro %}
+{% macro mark_sent_form(edition, user, normalization, csrf) %}
         <form method="post" action="/admin/editions/{{ edition.id }}/send/{{ user.id }}">
           <input type="hidden" name="csrf" value="{{ csrf }}">
-          <input type="hidden" name="address_id" value="{{ address.id }}">
+          <input type="hidden" name="normalized_address_id" value="{{ normalization.id }}">
           <button type="submit">Mark sent</button>
         </form>
 {%- endmacro %}
@@ -18,48 +35,95 @@
 <h1>{{ edition.title }}</h1>
 <p>Created {{ edition.created_at.date() }}.</p>
 
-<h2>To send ({{ pending | length }})</h2>
-<p><a href="/admin/editions/{{ edition.id }}/labels.csv">Export this list as CSV</a></p>
+{% if unreviewed %}
+<h2>Needs review ({{ unreviewed | length }})</h2>
 <div class="table-scroll">
 <table>
   <thead>
-    <tr><th>Name</th><th>Address</th><th>Email</th><th></th></tr>
+    <tr><th>Name</th><th>Address</th><th>Email</th><th></th><th></th></tr>
   </thead>
   <tbody>
-    {% for user, address in pending %}
+    {% for user, address in unreviewed %}
     <tr>
       <td>{{ address.addressee }}</td>
       <td>{{ address_lines(address) }}</td>
       <td>{{ user.email }}</td>
-      <td>{{ mark_sent_form(edition, user, address, csrf) }}</td>
+      <td>{{ normalize_link(edition, address) }}</td>
+      <td>{{ approve_form(edition, address, csrf) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+<h2>To send ({{ ready | length }})</h2>
+<p><a href="/admin/editions/{{ edition.id }}/labels.csv">Export this list as CSV</a></p>
+<div class="table-scroll">
+<table>
+  <thead>
+    <tr><th>Name</th><th>Address</th><th>Email</th><th></th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for user, address, normalization in ready %}
+    <tr>
+      <td>{{ normalization.addressee }}</td>
+      <td>{{ address_lines(normalization) }}</td>
+      <td>{{ user.email }}</td>
+      <td>{{ normalize_link(edition, address) }}</td>
+      <td>{{ mark_sent_form(edition, user, normalization, csrf) }}</td>
     </tr>
     {% else %}
-    <tr><td colspan="4">Nobody left to send to.</td></tr>
+    <tr><td colspan="5">Nobody left to send to.</td></tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
 
-{% if late %}
+{% if late_ready or late_unreviewed %}
 <details>
-  <summary>Signed up after this edition ({{ late | length }}) — send by choice</summary>
+  <summary>Signed up after this edition ({{ (late_ready | length) + (late_unreviewed | length) }}) — send by choice</summary>
+  {% if late_unreviewed %}
+  <h3>Needs review</h3>
   <div class="table-scroll">
 <table>
     <thead>
-      <tr><th>Name</th><th>Address</th><th>Signed up</th><th></th></tr>
+      <tr><th>Name</th><th>Address</th><th>Signed up</th><th></th><th></th></tr>
     </thead>
     <tbody>
-      {% for user, address in late %}
+      {% for user, address in late_unreviewed %}
       <tr>
         <td>{{ address.addressee }}</td>
         <td>{{ address_lines(address) }}</td>
         <td>{{ user.created_at.date() }}</td>
-        <td>{{ mark_sent_form(edition, user, address, csrf) }}</td>
+        <td>{{ normalize_link(edition, address) }}</td>
+        <td>{{ approve_form(edition, address, csrf) }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
+  {% endif %}
+  {% if late_ready %}
+  <div class="table-scroll">
+<table>
+    <thead>
+      <tr><th>Name</th><th>Address</th><th>Signed up</th><th></th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for user, address, normalization in late_ready %}
+      <tr>
+        <td>{{ normalization.addressee }}</td>
+        <td>{{ address_lines(normalization) }}</td>
+        <td>{{ user.created_at.date() }}</td>
+        <td>{{ normalize_link(edition, address) }}</td>
+        <td>{{ mark_sent_form(edition, user, normalization, csrf) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+  {% endif %}
 </details>
 {% endif %}
 
@@ -71,13 +135,14 @@
   </thead>
   <tbody>
     {% for s in mailpieces %}
+    {% set printed = s.normalized_address %}
     <tr>
-      <td>{{ s.address.addressee }}</td>
+      <td>{{ printed.addressee }}</td>
       <td>{{ s.sent_at.date() }}</td>
       <td>
-        {{ s.address.address_line1 }},
-        {{ s.address.city }} {{ s.address.postal_code }},
-        {{ s.address.country }}
+        {{ printed.address_line1 }},
+        {{ printed.city }} {{ printed.postal_code }},
+        {{ printed.country }}
       </td>
       <td>
         <form method="post" action="/admin/mailpieces/{{ s.id }}/delete">

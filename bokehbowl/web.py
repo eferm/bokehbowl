@@ -2,7 +2,7 @@
 
 import secrets
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
@@ -28,8 +28,9 @@ from bokehbowl.auth import (
 from bokehbowl.db import (
     User,
     UserSession,
-    latest_manual_address,
+    latest_address,
     record_address,
+    register_user,
     utcnow,
 )
 from bokehbowl.mailer import Mailer
@@ -125,6 +126,13 @@ class VerifyForm(BaseModel):
     code: str
 
 
+class SignupVerifyForm(SignupForm):
+    """A signup code submission: the signup payload plus the code sent to its
+    email."""
+
+    code: str
+
+
 @router.get("/")
 def index(request: Request, templates: Templates):
     return templates.TemplateResponse(request, "index.html", {"error": None})
@@ -150,25 +158,12 @@ def signup(
             },
             status_code=429,
         )
-    user = db.scalar(select(User).where(User.email == form.email))
-    if user is None:
-        user = User(email=form.email, verified_at=None, unsubscribed_at=None)
-        db.add(user)
-        db.flush()
-    if user.verified_at is None:
-        record_address(
-            db,
-            user.id,
-            addressee=form.name,
-            address_line1=form.address_line1,
-            address_line2=form.address_line2,
-            city=form.city,
-            region=form.region,
-            postal_code=form.postal_code,
-            country=form.country,
-        )
     send_login_code(db, mailer, form.email, background)
-    return RedirectResponse(f"/verify?email={form.email}", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "verify.html",
+        {"email": form.email, "error": None, "signup": form},
+    )
 
 
 @router.get("/login")
@@ -207,43 +202,15 @@ def verify_form(request: Request, templates: Templates, email: str):
     return templates.TemplateResponse(
         request,
         "verify.html",
-        {"email": normalize_email(email), "error": None},
+        {"email": normalize_email(email), "error": None, "signup": None},
     )
 
 
-@router.post("/verify")
-def verify(
-    request: Request,
-    db: Db,
-    templates: Templates,
-    mailer: Mail,
-    background: BackgroundTasks,
-    form: Annotated[VerifyForm, Form()],
-):
-    now = utcnow()
-    if not consume_login_code(db, form.email, form.code, now):
-        return templates.TemplateResponse(
-            request,
-            "verify.html",
-            {
-                "email": form.email,
-                "error": "That code didn't work. Check it, or request a new one.",
-            },
-            status_code=422,
-        )
-    user = db.scalar(select(User).where(User.email == form.email))
-    if user is None:
-        raise LoginRequired()
-    newly_registered = user.verified_at is None
-    if newly_registered:
-        user.verified_at = now
-        manual = latest_manual_address(db, user.id)
-        background.add_task(
-            mailer.send,
-            to=request.app.state.config.notify_email,
-            subject=f"New signup: {manual.addressee}",
-            body=f"{manual.addressee} <{user.email}> signed up.",
-        )
+def log_in(
+    request: Request, db: Session, user: User, now: datetime, *, created: bool
+) -> RedirectResponse:
+    """A logged-in redirect to the account page: expired sessions pruned, a
+    fresh session minted and bound to the browser."""
     db.execute(
         delete(UserSession).where(UserSession.created_at < now - USER_SESSION_TTL)
     )
@@ -254,8 +221,77 @@ def verify(
     db.add(session)
     request.session["user_token"] = session.token
     db.commit()
-    destination = "/account?created=1" if newly_registered else "/account"
+    destination = "/account?created=1" if created else "/account"
     return RedirectResponse(destination, status_code=303)
+
+
+@router.post("/signup/verify")
+def signup_verify(
+    request: Request,
+    db: Db,
+    templates: Templates,
+    mailer: Mail,
+    background: BackgroundTasks,
+    form: Annotated[SignupVerifyForm, Form()],
+):
+    now = utcnow()
+    if not consume_login_code(db, form.email, form.code, now):
+        return templates.TemplateResponse(
+            request,
+            "verify.html",
+            {
+                "email": form.email,
+                "error": "That code didn't work. Check it, or request a new one.",
+                "signup": form,
+            },
+            status_code=422,
+        )
+    user = db.scalar(select(User).where(User.email == form.email))
+    created = user is None
+    if user is None:
+        user = register_user(
+            db,
+            form.email,
+            addressee=form.name,
+            address_line1=form.address_line1,
+            address_line2=form.address_line2,
+            city=form.city,
+            region=form.region,
+            postal_code=form.postal_code,
+            country=form.country,
+        )
+        background.add_task(
+            mailer.send,
+            to=request.app.state.config.notify_email,
+            subject=f"New signup: {form.name}",
+            body=f"{form.name} <{user.email}> signed up.",
+        )
+    return log_in(request, db, user, now, created=created)
+
+
+@router.post("/login/verify")
+def login_verify(
+    request: Request,
+    db: Db,
+    templates: Templates,
+    form: Annotated[VerifyForm, Form()],
+):
+    now = utcnow()
+    if not consume_login_code(db, form.email, form.code, now):
+        return templates.TemplateResponse(
+            request,
+            "verify.html",
+            {
+                "email": form.email,
+                "error": "That code didn't work. Check it, or request a new one.",
+                "signup": None,
+            },
+            status_code=422,
+        )
+    user = db.scalar(select(User).where(User.email == form.email))
+    if user is None:
+        raise LoginRequired()
+    return log_in(request, db, user, now, created=False)
 
 
 @router.get("/account")
@@ -265,7 +301,7 @@ def account(request: Request, db: Db, templates: Templates, user: CurrentUser):
         "account.html",
         {
             "user": user,
-            "address": latest_manual_address(db, user.id),
+            "address": latest_address(db, user.id),
             "created": request.query_params.get("created") == "1",
             "saved": "saved" in request.query_params,
             "editing": "edit" in request.query_params,

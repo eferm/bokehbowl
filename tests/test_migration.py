@@ -1,5 +1,5 @@
-"""The data-copying migration between the recipients schema and the users
-schema, exercised on a fixture database."""
+"""The data-copying migrations from the recipients schema through the
+verified-only users schema, exercised on a fixture database."""
 
 from pathlib import Path
 
@@ -12,6 +12,7 @@ from sqlalchemy import Connection, Engine, create_engine, text
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 OLD_REVISION = "5ea8adf60cba"
+MID_REVISION = "9157d1772fb8"
 
 DAY_1 = "2026-01-01 09:00:00.000000"
 DAY_2 = "2026-01-02 09:00:00.000000"
@@ -181,7 +182,7 @@ def old_database(tmp_path, monkeypatch) -> tuple[Config, Engine]:
 
 def test_upgrade_carries_users_and_editions(old_database):
     config, engine = old_database
-    command.upgrade(config, "head")
+    command.upgrade(config, MID_REVISION)
 
     users = by_id(engine, "SELECT * FROM users")
     assert set(users) == {"ada", "grace", "charles"}
@@ -202,7 +203,7 @@ def test_upgrade_carries_users_and_editions(old_database):
 
 def test_upgrade_dedupes_addresses_and_keeps_version_ids(old_database):
     config, engine = old_database
-    command.upgrade(config, "head")
+    command.upgrade(config, MID_REVISION)
 
     addresses = by_id(engine, "SELECT * FROM addresses")
     assert set(addresses) == {"v-ada-1", "v-ada-3", "v-grace-1", "v-charles-1"}
@@ -216,7 +217,7 @@ def test_upgrade_dedupes_addresses_and_keeps_version_ids(old_database):
 
 def test_upgrade_repoints_mailpieces_at_deduped_addresses(old_database):
     config, engine = old_database
-    command.upgrade(config, "head")
+    command.upgrade(config, MID_REVISION)
 
     mailpieces = by_id(engine, "SELECT * FROM mailpieces")
     assert mailpieces["mp-ada"] == {
@@ -231,7 +232,7 @@ def test_upgrade_repoints_mailpieces_at_deduped_addresses(old_database):
 
 def test_upgrade_preserves_sessions(old_database):
     config, engine = old_database
-    command.upgrade(config, "head")
+    command.upgrade(config, MID_REVISION)
 
     assert rows(engine, "SELECT * FROM user_sessions") == [
         {"token": "tok-ada", "user_id": "ada", "created_at": DAY_3}
@@ -240,14 +241,14 @@ def test_upgrade_preserves_sessions(old_database):
 
 def test_upgrade_satisfies_every_foreign_key(old_database):
     config, engine = old_database
-    command.upgrade(config, "head")
+    command.upgrade(config, MID_REVISION)
 
     assert rows(engine, "PRAGMA foreign_key_check") == []
 
 
 def test_downgrade_restores_the_recipient_schema(old_database):
     config, engine = old_database
-    command.upgrade(config, "head")
+    command.upgrade(config, MID_REVISION)
     command.downgrade(config, OLD_REVISION)
 
     recipients = by_id(engine, "SELECT * FROM recipients")
@@ -263,3 +264,109 @@ def test_downgrade_restores_the_recipient_schema(old_database):
     mailpieces = by_id(engine, "SELECT * FROM mailpieces")
     assert mailpieces["mp-ada"]["recipient_version_id"] == "v-ada-1"
     assert mailpieces["mp-grace"] == MAILPIECES[1]
+
+
+DERIVED_ROW = {
+    "id": "d-ada-1",
+    "user_id": "ada",
+    "addressee": "ADA LOVELACE",
+    "address_line1": "1 OCKHAM PK",
+    "address_line2": None,
+    "city": "SURREY",
+    "region": None,
+    "postal_code": "GU23 6NQ",
+    "country": "UNITED KINGDOM",
+    "derived_from_id": "v-ada-3",
+    "created_at": DAY_4,
+}
+
+
+def test_head_keeps_verified_users_and_drops_unverified(old_database):
+    config, engine = old_database
+    command.upgrade(config, "head")
+
+    users = by_id(engine, "SELECT * FROM users")
+    assert set(users) == {"ada", "grace"}
+    assert users["ada"] == {
+        "id": "ada",
+        "email": "ada@example.com",
+        "unsubscribed_at": None,
+        "created_at": DAY_1,
+    }
+    assert users["grace"]["unsubscribed_at"] == DAY_4
+
+    addresses = by_id(engine, "SELECT * FROM addresses")
+    assert set(addresses) == {"v-ada-1", "v-ada-3", "v-grace-1"}
+    assert "derived_from_id" not in addresses["v-ada-1"]
+
+    assert rows(engine, "SELECT * FROM user_sessions") == [
+        {"token": "tok-ada", "user_id": "ada", "created_at": DAY_3}
+    ]
+    mailpieces = by_id(engine, "SELECT * FROM mailpieces")
+    assert set(mailpieces) == {"mp-ada", "mp-grace"}
+    assert "address_id" not in mailpieces["mp-ada"]
+
+    normalized = by_id(engine, "SELECT * FROM normalized_addresses")
+    ada_print = normalized[mailpieces["mp-ada"]["normalized_address_id"]]
+    assert ada_print["address_id"] == "v-ada-1"
+    assert ada_print["addressee"] == "Ada Lovelace"
+    assert ada_print["address_line1"] == "12 Analytical Way"
+    assert ada_print["created_at"] == DAY_3
+    grace_print = normalized[mailpieces["mp-grace"]["normalized_address_id"]]
+    assert grace_print["address_id"] == "v-grace-1"
+    assert grace_print["address_line1"] == "3 Mark II Lane"
+    assert grace_print["created_at"] == DAY_3
+
+
+def test_head_satisfies_every_foreign_key(old_database):
+    config, engine = old_database
+    command.upgrade(config, "head")
+
+    assert rows(engine, "PRAGMA foreign_key_check") == []
+
+
+def test_head_moves_derived_rows_into_normalized_addresses(old_database):
+    config, engine = old_database
+    command.upgrade(config, MID_REVISION)
+    with engine.begin() as conn:
+        insert(conn, "addresses", [DERIVED_ROW])
+        conn.execute(
+            text("UPDATE mailpieces SET address_id = 'd-ada-1' WHERE id = 'mp-ada'")
+        )
+    command.upgrade(config, "head")
+
+    normalized = by_id(engine, "SELECT * FROM normalized_addresses")
+    assert normalized["d-ada-1"] == {
+        "id": "d-ada-1",
+        "address_id": "v-ada-3",
+        "addressee": "ADA LOVELACE",
+        "address_line1": "1 OCKHAM PK",
+        "address_line2": None,
+        "city": "SURREY",
+        "region": None,
+        "postal_code": "GU23 6NQ",
+        "country": "UNITED KINGDOM",
+        "created_at": DAY_4,
+    }
+    mailpieces = by_id(engine, "SELECT * FROM mailpieces")
+    assert mailpieces["mp-ada"]["normalized_address_id"] == "d-ada-1"
+
+    command.downgrade(config, MID_REVISION)
+    addresses = by_id(engine, "SELECT * FROM addresses")
+    assert addresses["d-ada-1"] == DERIVED_ROW
+    mailpieces = by_id(engine, "SELECT * FROM mailpieces")
+    assert mailpieces["mp-ada"]["address_id"] == "d-ada-1"
+    grace_print = addresses[mailpieces["mp-grace"]["address_id"]]
+    assert grace_print["derived_from_id"] == "v-grace-1"
+    assert grace_print["address_line1"] == "3 Mark II Lane"
+
+
+def test_downgrade_from_head_keeps_verified_users_only(old_database):
+    config, engine = old_database
+    command.upgrade(config, "head")
+    command.downgrade(config, MID_REVISION)
+
+    users = by_id(engine, "SELECT * FROM users", key="email")
+    assert set(users) == {"ada@example.com", "grace@example.com"}
+    assert users["ada@example.com"]["verified_at"] == DAY_1
+    assert users["grace@example.com"]["verified_at"] == DAY_1

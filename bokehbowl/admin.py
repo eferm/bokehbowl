@@ -13,21 +13,31 @@ from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from bokehbowl.auth import require_csrf
 from bokehbowl.db import (
+    ADDRESS_FIELDS,
     Address,
     AdminSession,
     Base,
     Edition,
     Mailpiece,
+    NormalizedAddress,
     User,
     UserSession,
     latest_address,
+    newest_normalization,
+    subscribed,
     utcnow,
 )
-from bokehbowl.web import Db, Templates
+from bokehbowl.web import AddressForm, Db, Templates
 
 
 class AdminRequired(Exception):
     """Raised when an admin page is hit without an admin session."""
+
+
+class NormalizeForm(AddressForm):
+    """A print-version submission, carrying the edition page to return to."""
+
+    edition: str = ""
 
 
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_csrf)])
@@ -40,6 +50,7 @@ ADMIN_SESSION_TTL = timedelta(days=14)
 TABLES: dict[str, tuple[type[Base], InstrumentedAttribute]] = {
     "users": (User, User.created_at),
     "addresses": (Address, Address.created_at),
+    "normalized_addresses": (NormalizedAddress, NormalizedAddress.created_at),
     "editions": (Edition, Edition.created_at),
     "mailpieces": (Mailpiece, Mailpiece.sent_at),
 }
@@ -134,9 +145,17 @@ def require_mailpiece(_: AdminOnly, db: Db, mailpiece_id: str) -> Mailpiece:
     return mailpiece
 
 
+def require_address(_: AdminOnly, db: Db, address_id: str) -> Address:
+    address = db.get(Address, address_id)
+    if address is None:
+        raise HTTPException(status_code=404)
+    return address
+
+
 UserById = Annotated[User, Depends(require_user)]
 EditionById = Annotated[Edition, Depends(require_edition)]
 MailpieceById = Annotated[Mailpiece, Depends(require_mailpiece)]
+AddressById = Annotated[Address, Depends(require_address)]
 
 
 def require_table(name: str) -> tuple[type[Base], InstrumentedAttribute]:
@@ -260,14 +279,8 @@ def export(db: Db, _: AdminOnly, table: str = "users"):
 
 
 def eligible_users(db: Session) -> list[User]:
-    """Everyone an edition may be sent to: verified and still subscribed."""
-    return list(
-        db.scalars(
-            select(User)
-            .where(User.verified_at.is_not(None), User.unsubscribed_at.is_(None))
-            .order_by(User.created_at)
-        )
-    )
+    """Everyone an edition may be sent to: still subscribed."""
+    return list(db.scalars(select(User).where(subscribed()).order_by(User.created_at)))
 
 
 def mailpieces_of(db: Session, edition_id: str) -> list[Mailpiece]:
@@ -280,39 +293,52 @@ def mailpieces_of(db: Session, edition_id: str) -> list[Mailpiece]:
     )
 
 
-def unsent_users(db: Session, edition_id: str) -> list[tuple[User, Address]]:
-    """Eligible users the edition has not gone to yet, each paired with the
-    address an envelope to them would use."""
+Recipient = tuple[User, Address, NormalizedAddress | None]
+"""A user, their current address, and its print version once one is filed."""
+
+ReadyRecipient = tuple[User, Address, NormalizedAddress]
+"""A recipient whose current address has a print version."""
+
+
+def unsent_users(db: Session, edition_id: str) -> list[Recipient]:
+    """Eligible users the edition has not gone to yet."""
     sent_ids = {mailpiece.user_id for mailpiece in mailpieces_of(db, edition_id)}
+    rows = []
+    for user in eligible_users(db):
+        if user.id in sent_ids:
+            continue
+        address = latest_address(db, user.id)
+        rows.append((user, address, newest_normalization(db, address)))
+    return rows
+
+
+def ready(rows: list[Recipient]) -> list[ReadyRecipient]:
+    """Recipients an envelope can be printed for."""
     return [
-        (user, address)
-        for user in eligible_users(db)
-        if user.id not in sent_ids
-        and (address := latest_address(db, user.id)) is not None
+        (user, address, normalization)
+        for user, address, normalization in rows
+        if normalization is not None
     ]
 
 
-def pending(
-    edition: Edition, unsent: list[tuple[User, Address]]
-) -> list[tuple[User, Address]]:
+def unreviewed(rows: list[Recipient]) -> list[tuple[User, Address]]:
+    """Recipients whose current address awaits review."""
+    return [
+        (user, address)
+        for user, address, normalization in rows
+        if normalization is None
+    ]
+
+
+def pending(edition: Edition, unsent: list[Recipient]) -> list[Recipient]:
     """The default mailing list: unsent users who existed when the edition did."""
-    return [
-        (user, address)
-        for user, address in unsent
-        if user.created_at <= edition.created_at
-    ]
+    return [row for row in unsent if row[0].created_at <= edition.created_at]
 
 
-def late(
-    edition: Edition, unsent: list[tuple[User, Address]]
-) -> list[tuple[User, Address]]:
+def late(edition: Edition, unsent: list[Recipient]) -> list[Recipient]:
     """Unsent users who signed up after the edition was created — sendable only
     by explicit choice."""
-    return [
-        (user, address)
-        for user, address in unsent
-        if user.created_at > edition.created_at
-    ]
+    return [row for row in unsent if row[0].created_at > edition.created_at]
 
 
 @router.post("/editions")
@@ -332,13 +358,17 @@ def edition_detail(
     request: Request, db: Db, templates: Templates, edition: EditionById
 ):
     unsent = unsent_users(db, edition.id)
+    to_send = pending(edition, unsent)
+    late_rows = late(edition, unsent)
     return templates.TemplateResponse(
         request,
         "edition.html",
         {
             "edition": edition,
-            "pending": pending(edition, unsent),
-            "late": late(edition, unsent),
+            "ready": ready(to_send),
+            "unreviewed": unreviewed(to_send),
+            "late_ready": ready(late_rows),
+            "late_unreviewed": unreviewed(late_rows),
             "mailpieces": mailpieces_of(db, edition.id),
         },
     )
@@ -349,12 +379,12 @@ def mark_sent(
     db: Db,
     edition: EditionById,
     user: UserById,
-    address_id: Annotated[str, Form()],
+    normalized_address_id: Annotated[str, Form()],
 ):
-    if user.verified_at is None or user.unsubscribed_at is not None:
+    if user.unsubscribed_at is not None:
         raise HTTPException(status_code=409)
-    address = db.get(Address, address_id)
-    if address is None or address.user_id != user.id:
+    normalized = db.get(NormalizedAddress, normalized_address_id)
+    if normalized is None or normalized.address.user_id != user.id:
         raise HTTPException(status_code=404)
     already_sent = db.scalar(
         select(Mailpiece).where(
@@ -366,7 +396,7 @@ def mark_sent(
             Mailpiece(
                 edition_id=edition.id,
                 user_id=user.id,
-                address_id=address.id,
+                normalized_address_id=normalized.id,
                 sent_at=utcnow(),
             )
         )
@@ -382,17 +412,50 @@ def undo_mailpiece(db: Db, mailpiece: MailpieceById):
 
 @router.get("/editions/{edition_id}/labels.csv")
 def export_labels(db: Db, edition: EditionById):
-    columns = [
-        "addressee",
-        "address_line1",
-        "address_line2",
-        "city",
-        "region",
-        "postal_code",
-        "country",
-    ]
+    columns = list(ADDRESS_FIELDS)
     rows = [
-        [getattr(address, column) for column in columns]
-        for _, address in pending(edition, unsent_users(db, edition.id))
+        [getattr(normalization, column) for column in columns]
+        for _, _, normalization in ready(pending(edition, unsent_users(db, edition.id)))
     ]
     return csv_response(f"edition-{edition.id}-to-send.csv", columns, rows)
+
+
+@router.get("/addresses/{address_id}/normalize")
+def normalize_form(
+    request: Request,
+    db: Db,
+    templates: Templates,
+    address: AddressById,
+    edition: str = "",
+):
+    return templates.TemplateResponse(
+        request,
+        "normalize.html",
+        {
+            "address": address,
+            "current": newest_normalization(db, address) or address,
+            "edition": edition,
+        },
+    )
+
+
+@router.post("/addresses/{address_id}/normalize")
+def normalize_address(
+    db: Db,
+    address: AddressById,
+    form: Annotated[NormalizeForm, Form()],
+):
+    db.add(
+        NormalizedAddress(
+            address_id=address.id,
+            addressee=form.name,
+            address_line1=form.address_line1,
+            address_line2=form.address_line2,
+            city=form.city,
+            region=form.region,
+            postal_code=form.postal_code,
+            country=form.country,
+        )
+    )
+    destination = f"/admin/editions/{form.edition}" if form.edition else "/admin"
+    return RedirectResponse(destination, status_code=303)

@@ -7,6 +7,8 @@
   --button-background: var(--ink);
   --button-foreground: var(--paper);
   --button-hover: #31312d;
+  --button-link-background: #e7e7e2;
+  --button-link-hover: #dcdcd6;
   --page-space: clamp(4rem, 11vw, 10rem);
 }
 
@@ -30,6 +32,8 @@ body.photo-theme {
   --button-background: rgb(255 255 255 / 90%);
   --button-foreground: #494945;
   --button-hover: #fff;
+  --button-link-background: rgb(255 255 255 / 20%);
+  --button-link-hover: rgb(255 255 255 / 32%);
 }
 
 body.photo-theme::before {
@@ -159,6 +163,16 @@ a {
 
 .admin nav {
   margin-bottom: 1.5rem;
+}
+
+.admin td form {
+  margin: 0;
+}
+
+.admin td button,
+.admin td .button-link {
+  min-height: 2rem;
+  padding: 0.45rem 0.7rem;
 }
 
 .table-scroll {
@@ -409,8 +423,7 @@ button,
   margin-top: 0.35rem;
 }
 
-button:hover,
-.button-link:hover {
+button:hover {
   background-color: var(--button-hover);
 }
 
@@ -422,7 +435,13 @@ button:active,
 .button-link {
   display: inline-flex;
   align-items: center;
+  background-color: var(--button-link-background);
+  color: var(--ink);
   text-decoration: none;
+}
+
+.button-link:hover {
+  background-color: var(--button-link-hover);
 }
 
 .site-header a:focus-visible,

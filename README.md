@@ -85,24 +85,49 @@ Back up `data/`, `.env`, and `instance/` before updates.
 
 ### Create an edition
 
-At `/admin`, create an edition. The edition page lists eligible
-users and provides a CSV export for labels. Marking an item sent records the
-address used for that mailpiece. Users joining after the edition's creation
-appear separately and can be included deliberately.
+At `/admin`, create an edition. The edition page splits eligible users into
+two groups. Needs review lists addresses awaiting a print version: Approve
+files the address as entered, and Normalize opens a form to edit it first. To
+send lists users whose current address has a print version, with a CSV
+export for labels. Marking an item sent records the print version on the
+envelope; the account page keeps showing what the user entered. Users
+joining after the edition's creation appear separately and can be included
+deliberately.
 
 ### Data model
 
-- **users** — one row per person: their email identity and two lifecycle
-  timestamps. `verified_at` set means they proved the email;
-  `unsubscribed_at` set means they left. Editions go to users with
-  `verified_at` set and `unsubscribed_at` unset.
-- **addresses** — every postal address a user has had, append-only. A row
-  with `derived_from_id` set is a validated correction of the manual entry it
-  points at. Mail uses the newest manual entry, corrected by its newest
-  validation when one exists; the account page shows the manual entry.
+- **users** — one row per verified email identity. `created_at` is the
+  verification moment; `unsubscribed_at` set means mail stops. Editions go
+  to users with `unsubscribed_at` unset. A signup's address travels in the
+  form until verification creates the user and their first address in one
+  transaction.
+- **addresses** — every postal address a user entered, append-only; the
+  newest row is current and is what the account page shows.
+- **normalized_addresses** — operator-approved print versions, each pinned to
+  one address row, append-only. An envelope prints the newest normalized
+  version of its address; an address with one is ready to send.
 - **editions** — one print run (a postcard design, a photo, a letter).
 - **mailpieces** — one physical piece of mail: an edition sent to one user,
-  pinned to the exact address row written on the envelope.
+  pinned to the normalized row printed on the envelope.
+
+### Invariants
+
+Each invariant lives at a named enforcement layer:
+
+- One user per email — `UNIQUE` on `users.email`.
+- One mailpiece per user per edition — `UNIQUE(edition_id, user_id)` on
+  `mailpieces`.
+- Every user has an address — registration creates the user and their
+  first address in one transaction.
+- Every envelope prints an operator-approved form —
+  `mailpieces.normalized_address_id` is non-null, and the mark-sent handler
+  requires a normalized row belonging to the user before writing.
+- A normalization prints only while its raw address is the user's newest — each
+  normalized row is pinned to one address row by `address_id`.
+- Login codes are single-use — consuming a code deletes it.
+- Foreign keys hold at runtime, and deleting a user cascades down the
+  user-rooted chain — the engine factory turns `PRAGMA foreign_keys` on for
+  every connection.
 
 ## Development
 
