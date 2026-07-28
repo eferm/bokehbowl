@@ -111,6 +111,21 @@ def cooldown_active(db: Session, email: str, now: datetime) -> bool:
     return current is not None and now - current.created_at < RESEND_COOLDOWN
 
 
+def spend_code_budget(
+    db: Session,
+    throttle: AddressThrottle,
+    address: str,
+    email: str,
+    now: datetime,
+) -> None:
+    """Charge the client address for a request that mints a code. A resend
+    inside the cooldown reuses the outstanding code and costs nothing. The
+    charge follows the code, so it lands the same whether or not the email has
+    an account."""
+    if not cooldown_active(db, email, now):
+        throttle.record(address, now)
+
+
 def issue_login_code(db: Session, email: str, now: datetime) -> str:
     """Create and store a fresh code, returning it."""
     code = f"{secrets.randbelow(1_000_000):06d}"

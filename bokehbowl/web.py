@@ -24,6 +24,7 @@ from bokehbowl.auth import (
     consume_login_code,
     require_csrf,
     send_login_code,
+    spend_code_budget,
     volume_capped,
 )
 from bokehbowl.db import (
@@ -38,6 +39,11 @@ from bokehbowl.mailer import Mailer
 
 
 USER_SESSION_TTL = timedelta(days=30)
+
+CODE_REQUESTS_THROTTLED = (
+    "Too many code requests from here. Try again in a few minutes."
+)
+CODES_UNAVAILABLE = "Sign-in codes are temporarily unavailable. Try again in an hour."
 
 
 class LoginRequired(Exception):
@@ -151,23 +157,31 @@ def signup(
     now = utcnow()
     throttle = request.app.state.code_request_throttle
     address = client_address(request)
-    if throttle.throttled(address, now) or volume_capped(db, now):
+    if throttle.throttled(address, now):
         return templates.TemplateResponse(
             request,
-            "index.html",
+            "verify.html",
             {
-                "error": (
-                    "Sign-in codes are temporarily unavailable. Try again in an hour."
-                ),
+                "email": form.email,
+                "error": CODE_REQUESTS_THROTTLED,
+                "signup": form,
+                "code_outstanding": False,
             },
             status_code=429,
         )
-    throttle.record(address, now)
+    if volume_capped(db, now):
+        return templates.TemplateResponse(
+            request,
+            "index.html",
+            {"error": CODES_UNAVAILABLE},
+            status_code=429,
+        )
+    spend_code_budget(db, throttle, address, form.email, now)
     send_login_code(db, mailer, form.email, background)
     return templates.TemplateResponse(
         request,
         "verify.html",
-        {"email": form.email, "error": None, "signup": form},
+        {"email": form.email, "error": None, "signup": form, "code_outstanding": True},
     )
 
 
@@ -190,18 +204,21 @@ def login(
     now = utcnow()
     throttle = request.app.state.code_request_throttle
     address = client_address(request)
-    if throttle.throttled(address, now) or volume_capped(db, now):
+    if throttle.throttled(address, now):
         return templates.TemplateResponse(
             request,
             "login.html",
-            {
-                "error": (
-                    "Sign-in codes are temporarily unavailable. Try again in an hour."
-                ),
-            },
+            {"error": CODE_REQUESTS_THROTTLED},
             status_code=429,
         )
-    throttle.record(address, now)
+    if volume_capped(db, now):
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": CODES_UNAVAILABLE},
+            status_code=429,
+        )
+    spend_code_budget(db, throttle, address, form.email, now)
     existing = db.scalar(select(User).where(User.email == form.email))
     if existing is not None:
         send_login_code(db, mailer, form.email, background)
@@ -213,8 +230,20 @@ def login_verify_form(request: Request, templates: Templates, email: str):
     return templates.TemplateResponse(
         request,
         "verify.html",
-        {"email": normalize_email(email), "error": None, "signup": None},
+        {
+            "email": normalize_email(email),
+            "error": None,
+            "signup": None,
+            "code_outstanding": True,
+        },
     )
+
+
+@router.get("/signup/verify")
+def signup_verify_form():
+    """The signup code form lives in the response to POST /signup, which carries
+    the signup payload; a direct visit starts at the signup form."""
+    return RedirectResponse("/", status_code=303)
 
 
 def start_session(
@@ -255,6 +284,7 @@ def signup_verify(
                 "email": form.email,
                 "error": "Too many attempts from here. Try again in a few minutes.",
                 "signup": form,
+                "code_outstanding": True,
             },
             status_code=429,
         )
@@ -267,6 +297,7 @@ def signup_verify(
                 "email": form.email,
                 "error": "That code didn't work. Check it, or request a new one.",
                 "signup": form,
+                "code_outstanding": True,
             },
             status_code=422,
         )
@@ -311,6 +342,7 @@ def login_verify(
                 "email": form.email,
                 "error": "Too many attempts from here. Try again in a few minutes.",
                 "signup": None,
+                "code_outstanding": True,
             },
             status_code=429,
         )
@@ -323,6 +355,7 @@ def login_verify(
                 "email": form.email,
                 "error": "That code didn't work. Check it, or request a new one.",
                 "signup": None,
+                "code_outstanding": True,
             },
             status_code=422,
         )

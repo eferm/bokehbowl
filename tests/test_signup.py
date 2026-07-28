@@ -350,6 +350,62 @@ def test_code_requests_are_capped_per_address(client, mailer):
     assert len(mailer.sent) == cap
 
 
+def test_resend_inside_the_cooldown_leaves_the_code_budget_alone(client, mailer):
+    """The budget counts codes, so mashing Resend during the cooldown spends
+    none of it."""
+    csrf = csrf_from(client.get("/").text)
+    cap = client.app.state.code_request_throttle.cap
+    statuses = [
+        client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf}).status_code
+        for _ in range(cap + 3)
+    ]
+
+    assert statuses == [200] * (cap + 3)
+    assert len(mailer.sent) == 1
+
+
+def test_a_throttled_signup_keeps_the_address_on_the_page(client, mailer):
+    cap = client.app.state.code_request_throttle.cap
+    request_codes(client.app, "10.0.0.5", cap, prefix="flood")
+    with TestClient(
+        client.app, base_url="https://testserver", client=("10.0.0.5", 999)
+    ) as guest:
+        csrf = csrf_from(guest.get("/").text)
+        response = guest.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
+
+    assert response.status_code == 429
+    assert "Too many code requests from here" in response.text
+    assert "12 Analytical Way" in response.text
+    assert "on its way" not in response.text
+
+
+def test_login_budget_spends_the_same_on_an_email_without_an_account(client, mailer):
+    """Codes for unknown emails cost what codes for known ones cost, so the cap
+    keeps quiet about who has an account."""
+    cap = client.app.state.code_request_throttle.cap
+    with TestClient(
+        client.app, base_url="https://testserver", client=("10.0.0.6", 999)
+    ) as guest:
+        csrf = csrf_from(guest.get("/").text)
+        statuses = [
+            guest.post(
+                "/login",
+                data={"csrf": csrf, "email": f"nobody{n}@example.com"},
+                follow_redirects=False,
+            ).status_code
+            for n in range(cap + 1)
+        ]
+
+    assert statuses == [303] * cap + [429]
+    assert mailer.sent == []
+
+
+def test_signup_verify_page_reached_directly_starts_at_the_signup_form(client):
+    response = client.get("/signup/verify", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+
+
 def test_one_address_cannot_exhaust_the_code_budget(client, mailer):
     cap = client.app.state.code_request_throttle.cap
     request_codes(client.app, "10.0.0.1", cap, prefix="flood")
