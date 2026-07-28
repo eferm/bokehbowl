@@ -25,15 +25,21 @@ from bokehbowl.auth import (
     send_login_code,
     volume_capped,
 )
-from bokehbowl.db import Recipient, RecipientSession, record_version, utcnow
+from bokehbowl.db import (
+    User,
+    UserSession,
+    latest_manual_address,
+    record_address,
+    utcnow,
+)
 from bokehbowl.mailer import Mailer
 
 
-RECIPIENT_SESSION_TTL = timedelta(days=30)
+USER_SESSION_TTL = timedelta(days=30)
 
 
 class LoginRequired(Exception):
-    """Raised when a page needs a signed-in recipient and the session has none."""
+    """Raised when a page needs a signed-in user and the session has none."""
 
 
 def get_db(request: Request) -> Iterator[Session]:
@@ -55,19 +61,19 @@ Templates = Annotated[Jinja2Templates, Depends(get_templates)]
 Mail = Annotated[Mailer, Depends(get_mailer)]
 
 
-def require_recipient(request: Request, db: Db) -> Recipient:
-    recipient_token = request.session.get("recipient_token")
-    if not isinstance(recipient_token, str):
+def require_user(request: Request, db: Db) -> User:
+    user_token = request.session.get("user_token")
+    if not isinstance(user_token, str):
         raise LoginRequired()
-    session = db.get(RecipientSession, recipient_token)
+    session = db.get(UserSession, user_token)
     if session is None:
         raise LoginRequired()
-    if session.created_at < utcnow() - RECIPIENT_SESSION_TTL:
+    if session.created_at < utcnow() - USER_SESSION_TTL:
         raise LoginRequired()
-    return session.recipient
+    return session.user
 
 
-CurrentRecipient = Annotated[Recipient, Depends(require_recipient)]
+CurrentUser = Annotated[User, Depends(require_user)]
 
 router = APIRouter(dependencies=[Depends(require_csrf)])
 
@@ -80,7 +86,7 @@ NormalizedEmail = Annotated[EmailStr, BeforeValidator(normalize_email)]
 
 
 class AddressForm(BaseModel):
-    """A recipient's name and postal address, whitespace-stripped on entry."""
+    """A user's name and postal address, whitespace-stripped on entry."""
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -119,17 +125,6 @@ class VerifyForm(BaseModel):
     code: str
 
 
-def apply_address(recipient: Recipient, form: AddressForm) -> None:
-    """Copy the form's address fields onto the recipient."""
-    recipient.name = form.name
-    recipient.address_line1 = form.address_line1
-    recipient.address_line2 = form.address_line2
-    recipient.city = form.city
-    recipient.region = form.region
-    recipient.postal_code = form.postal_code
-    recipient.country = form.country
-
-
 @router.get("/")
 def index(request: Request, templates: Templates):
     return templates.TemplateResponse(request, "index.html", {"error": None})
@@ -155,20 +150,25 @@ def signup(
             },
             status_code=429,
         )
-    address = form.email
-    existing = db.scalar(select(Recipient).where(Recipient.email == address))
-    if existing is None:
-        recipient = Recipient(email=address, verified_at=None, unsubscribed_at=None)
-        apply_address(recipient, form)
-        db.add(recipient)
+    user = db.scalar(select(User).where(User.email == form.email))
+    if user is None:
+        user = User(email=form.email, verified_at=None, unsubscribed_at=None)
+        db.add(user)
         db.flush()
-        record_version(db, recipient, utcnow())
-    elif existing.verified_at is None:
-        apply_address(existing, form)
-        db.add(existing)
-        record_version(db, existing, utcnow())
-    send_login_code(db, mailer, address, background)
-    return RedirectResponse(f"/verify?email={address}", status_code=303)
+    if user.verified_at is None:
+        record_address(
+            db,
+            user.id,
+            addressee=form.name,
+            address_line1=form.address_line1,
+            address_line2=form.address_line2,
+            city=form.city,
+            region=form.region,
+            postal_code=form.postal_code,
+            country=form.country,
+        )
+    send_login_code(db, mailer, form.email, background)
+    return RedirectResponse(f"/verify?email={form.email}", status_code=303)
 
 
 @router.get("/login")
@@ -196,11 +196,10 @@ def login(
             },
             status_code=429,
         )
-    address = form.email
-    existing = db.scalar(select(Recipient).where(Recipient.email == address))
+    existing = db.scalar(select(User).where(User.email == form.email))
     if existing is not None:
-        send_login_code(db, mailer, address, background)
-    return RedirectResponse(f"/verify?email={address}", status_code=303)
+        send_login_code(db, mailer, form.email, background)
+    return RedirectResponse(f"/verify?email={form.email}", status_code=303)
 
 
 @router.get("/verify")
@@ -221,53 +220,52 @@ def verify(
     background: BackgroundTasks,
     form: Annotated[VerifyForm, Form()],
 ):
-    address = form.email
     now = utcnow()
-    if not consume_login_code(db, address, form.code, now):
+    if not consume_login_code(db, form.email, form.code, now):
         return templates.TemplateResponse(
             request,
             "verify.html",
             {
-                "email": address,
+                "email": form.email,
                 "error": "That code didn't work. Check it, or request a new one.",
             },
             status_code=422,
         )
-    recipient = db.scalar(select(Recipient).where(Recipient.email == address))
-    if recipient is None:
+    user = db.scalar(select(User).where(User.email == form.email))
+    if user is None:
         raise LoginRequired()
-    newly_verified = recipient.verified_at is None
-    if newly_verified:
-        recipient.verified_at = now
+    newly_registered = user.verified_at is None
+    if newly_registered:
+        user.verified_at = now
+        manual = latest_manual_address(db, user.id)
         background.add_task(
             mailer.send,
             to=request.app.state.config.notify_email,
-            subject=f"New signup: {recipient.name}",
-            body=f"{recipient.name} <{recipient.email}> signed up.",
+            subject=f"New signup: {manual.addressee}",
+            body=f"{manual.addressee} <{user.email}> signed up.",
         )
     db.execute(
-        delete(RecipientSession).where(
-            RecipientSession.created_at < now - RECIPIENT_SESSION_TTL
-        )
+        delete(UserSession).where(UserSession.created_at < now - USER_SESSION_TTL)
     )
-    session = RecipientSession(
-        recipient_id=recipient.id,
+    session = UserSession(
+        user_id=user.id,
         token=secrets.token_urlsafe(32),
     )
     db.add(session)
-    request.session["recipient_token"] = session.token
+    request.session["user_token"] = session.token
     db.commit()
-    destination = "/account?created=1" if newly_verified else "/account"
+    destination = "/account?created=1" if newly_registered else "/account"
     return RedirectResponse(destination, status_code=303)
 
 
 @router.get("/account")
-def account(request: Request, templates: Templates, recipient: CurrentRecipient):
+def account(request: Request, db: Db, templates: Templates, user: CurrentUser):
     return templates.TemplateResponse(
         request,
         "account.html",
         {
-            "recipient": recipient,
+            "user": user,
+            "address": latest_manual_address(db, user.id),
             "created": request.query_params.get("created") == "1",
             "saved": "saved" in request.query_params,
             "editing": "edit" in request.query_params,
@@ -279,30 +277,34 @@ def account(request: Request, templates: Templates, recipient: CurrentRecipient)
 def update_account(
     request: Request,
     db: Db,
-    recipient: CurrentRecipient,
+    user: CurrentUser,
     form: Annotated[AddressForm, Form()],
 ):
-    apply_address(recipient, form)
-    db.add(recipient)
-    record_version(db, recipient, utcnow())
+    record_address(
+        db,
+        user.id,
+        addressee=form.name,
+        address_line1=form.address_line1,
+        address_line2=form.address_line2,
+        city=form.city,
+        region=form.region,
+        postal_code=form.postal_code,
+        country=form.country,
+    )
     return RedirectResponse("/account?saved=1", status_code=303)
 
 
-@router.post("/account/unregister")
-def unregister(request: Request, db: Db, recipient: CurrentRecipient):
-    recipient.unsubscribed_at = utcnow()
-    db.add(recipient)
-    db.execute(
-        delete(RecipientSession).where(RecipientSession.recipient_id == recipient.id)
-    )
-    request.session.pop("recipient_token", None)
+@router.post("/account/unsubscribe")
+def unsubscribe(request: Request, db: Db, user: CurrentUser):
+    user.unsubscribed_at = utcnow()
+    db.execute(delete(UserSession).where(UserSession.user_id == user.id))
+    request.session.pop("user_token", None)
     return RedirectResponse("/goodbye", status_code=303)
 
 
-@router.post("/account/reregister")
-def reregister(request: Request, db: Db, recipient: CurrentRecipient):
-    recipient.unsubscribed_at = None
-    db.add(recipient)
+@router.post("/account/resubscribe")
+def resubscribe(request: Request, db: Db, user: CurrentUser):
+    user.unsubscribed_at = None
     return RedirectResponse("/account", status_code=303)
 
 
@@ -318,10 +320,8 @@ def goodbye(request: Request, templates: Templates):
 
 @router.post("/logout")
 def logout(request: Request, db: Db):
-    recipient_token = request.session.get("recipient_token")
-    if isinstance(recipient_token, str):
-        db.execute(
-            delete(RecipientSession).where(RecipientSession.token == recipient_token)
-        )
-    request.session.pop("recipient_token", None)
+    user_token = request.session.get("user_token")
+    if isinstance(user_token, str):
+        db.execute(delete(UserSession).where(UserSession.token == user_token))
+    request.session.pop("user_token", None)
     return RedirectResponse("/", status_code=303)
