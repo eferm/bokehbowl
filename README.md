@@ -57,7 +57,8 @@ docker compose up -d --build
 Compose binds the app to `127.0.0.1:8000`. Put an HTTPS reverse proxy or
 Cloudflare Tunnel in front of it. The container applies Alembic migrations at
 startup. SQLite data lives in `./data/`; copy that directory as part of your
-backup routine.
+backup routine. The container runs as uid 10001, which needs write access to
+`./data/`.
 
 Uvicorn runs with `--proxy-headers` and takes the client IP and scheme from
 `X-Forwarded-*`. `FORWARDED_ALLOW_IPS` names the proxy hops trusted to set those
