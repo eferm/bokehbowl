@@ -35,15 +35,15 @@
 <h1>{{ edition.title }}</h1>
 <p>Created {{ edition.created_at.date() }}.</p>
 
-{% if unreviewed %}
-<h2>Needs review ({{ unreviewed | length }})</h2>
+{% if needs_review %}
+<h2>Needs review ({{ needs_review | length }})</h2>
 <div class="table-scroll">
 <table>
   <thead>
     <tr><th>Name</th><th>Address</th><th>Email</th><th></th><th></th></tr>
   </thead>
   <tbody>
-    {% for user, address in unreviewed %}
+    {% for user, address in needs_review %}
     <tr>
       <td>{{ address.addressee }}</td>
       <td>{{ address_lines(address) }}</td>
@@ -57,7 +57,7 @@
 </div>
 {% endif %}
 
-<h2>To send ({{ ready | length }})</h2>
+<h2>To send ({{ to_send | length }})</h2>
 <p><a href="/admin/editions/{{ edition.id }}/labels.csv">Export this list as CSV</a></p>
 <div class="table-scroll">
 <table>
@@ -65,7 +65,7 @@
     <tr><th>Name</th><th>Address</th><th>Email</th><th></th><th></th></tr>
   </thead>
   <tbody>
-    {% for user, address, normalized_address in ready %}
+    {% for user, address, normalized_address in to_send %}
     <tr>
       <td>{{ normalized_address.addressee }}</td>
       <td>{{ address_lines(normalized_address) }}</td>
@@ -79,53 +79,6 @@
   </tbody>
 </table>
 </div>
-
-{% if late_ready or late_unreviewed %}
-<details>
-  <summary>Signed up after this edition ({{ (late_ready | length) + (late_unreviewed | length) }}) — send by choice</summary>
-  {% if late_unreviewed %}
-  <h3>Needs review</h3>
-  <div class="table-scroll">
-<table>
-    <thead>
-      <tr><th>Name</th><th>Address</th><th>Signed up</th><th></th><th></th></tr>
-    </thead>
-    <tbody>
-      {% for user, address in late_unreviewed %}
-      <tr>
-        <td>{{ address.addressee }}</td>
-        <td>{{ address_lines(address) }}</td>
-        <td>{{ user.created_at.date() }}</td>
-        <td>{{ normalize_link(edition, address) }}</td>
-        <td>{{ approve_form(edition, address, csrf) }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-  {% endif %}
-  {% if late_ready %}
-  <div class="table-scroll">
-<table>
-    <thead>
-      <tr><th>Name</th><th>Address</th><th>Signed up</th><th></th><th></th></tr>
-    </thead>
-    <tbody>
-      {% for user, address, normalized_address in late_ready %}
-      <tr>
-        <td>{{ normalized_address.addressee }}</td>
-        <td>{{ address_lines(normalized_address) }}</td>
-        <td>{{ user.created_at.date() }}</td>
-        <td>{{ normalize_link(edition, address) }}</td>
-        <td>{{ mark_sent_form(edition, user, normalized_address, csrf) }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-  {% endif %}
-</details>
-{% endif %}
 
 <h2>Sent ({{ mailpieces | length }})</h2>
 <div class="table-scroll">

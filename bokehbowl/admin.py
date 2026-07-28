@@ -277,11 +277,18 @@ def export(db: Db, _: AdminOnly, table: str = "users"):
     )
 
 
-def eligible_users(db: Session) -> list[User]:
-    """Everyone an edition may be sent to: still subscribed."""
+def eligible_users(db: Session, edition: Edition) -> list[User]:
+    """Everyone the edition may be sent to: still subscribed, and signed up by
+    the time the edition was created. The one definition of who is on an
+    edition's list; the edition page and the send handler both ask it."""
     return list(
         db.scalars(
-            select(User).where(User.unsubscribed_at.is_(None)).order_by(User.created_at)
+            select(User)
+            .where(
+                User.unsubscribed_at.is_(None),
+                User.created_at <= edition.created_at,
+            )
+            .order_by(User.created_at)
         )
     )
 
@@ -303,11 +310,11 @@ ReadyRecipient = tuple[User, Address, NormalizedAddress]
 """A recipient whose current address has a print version."""
 
 
-def unsent_users(db: Session, edition_id: str) -> list[Recipient]:
+def unsent_recipients(db: Session, edition: Edition) -> list[Recipient]:
     """Eligible users the edition has not gone to yet."""
-    sent_ids = {mailpiece.user_id for mailpiece in mailpieces_of(db, edition_id)}
+    sent_ids = {mailpiece.user_id for mailpiece in mailpieces_of(db, edition.id)}
     rows = []
-    for user in eligible_users(db):
+    for user in eligible_users(db, edition):
         if user.id in sent_ids:
             continue
         address = latest_address(db, user.id)
@@ -315,8 +322,8 @@ def unsent_users(db: Session, edition_id: str) -> list[Recipient]:
     return rows
 
 
-def ready(rows: list[Recipient]) -> list[ReadyRecipient]:
-    """Recipients an envelope can be printed for."""
+def recipients_ready_to_send(rows: list[Recipient]) -> list[ReadyRecipient]:
+    """Recipients whose current address has a print version."""
     return [
         (user, address, normalized_address)
         for user, address, normalized_address in rows
@@ -324,24 +331,13 @@ def ready(rows: list[Recipient]) -> list[ReadyRecipient]:
     ]
 
 
-def unreviewed(rows: list[Recipient]) -> list[tuple[User, Address]]:
-    """Recipients whose current address awaits review."""
+def recipients_needing_review(rows: list[Recipient]) -> list[tuple[User, Address]]:
+    """Recipients whose current address awaits a print version."""
     return [
         (user, address)
         for user, address, normalized_address in rows
         if normalized_address is None
     ]
-
-
-def pending(edition: Edition, unsent: list[Recipient]) -> list[Recipient]:
-    """The default mailing list: unsent users who existed when the edition did."""
-    return [row for row in unsent if row[0].created_at <= edition.created_at]
-
-
-def late(edition: Edition, unsent: list[Recipient]) -> list[Recipient]:
-    """Unsent users who signed up after the edition was created — sendable only
-    by explicit choice."""
-    return [row for row in unsent if row[0].created_at > edition.created_at]
 
 
 @router.post("/editions")
@@ -360,18 +356,14 @@ def create_edition(
 def edition_detail(
     request: Request, db: Db, templates: Templates, edition: EditionById
 ):
-    unsent = unsent_users(db, edition.id)
-    to_send = pending(edition, unsent)
-    late_rows = late(edition, unsent)
+    unsent = unsent_recipients(db, edition)
     return templates.TemplateResponse(
         request,
         "edition.html",
         {
             "edition": edition,
-            "ready": ready(to_send),
-            "unreviewed": unreviewed(to_send),
-            "late_ready": ready(late_rows),
-            "late_unreviewed": unreviewed(late_rows),
+            "to_send": recipients_ready_to_send(unsent),
+            "needs_review": recipients_needing_review(unsent),
             "mailpieces": mailpieces_of(db, edition.id),
         },
     )
@@ -384,17 +376,13 @@ def mark_sent(
     user: UserById,
     normalized_address_id: Annotated[str, Form()],
 ):
-    if user.unsubscribed_at is not None:
+    if user.id not in {eligible.id for eligible in eligible_users(db, edition)}:
         raise HTTPException(status_code=409)
     normalized = db.get(NormalizedAddress, normalized_address_id)
     if normalized is None or normalized.address.user_id != user.id:
         raise HTTPException(status_code=404)
-    already_sent = db.scalar(
-        select(Mailpiece).where(
-            Mailpiece.edition_id == edition.id, Mailpiece.user_id == user.id
-        )
-    )
-    if already_sent is None:
+    sent_ids = {mailpiece.user_id for mailpiece in mailpieces_of(db, edition.id)}
+    if user.id not in sent_ids:
         db.add(
             Mailpiece(
                 edition_id=edition.id,
@@ -407,7 +395,7 @@ def mark_sent(
 
 
 @router.post("/mailpieces/{mailpiece_id}/delete")
-def undo_mailpiece(db: Db, mailpiece: MailpieceById):
+def delete_mailpiece(db: Db, mailpiece: MailpieceById):
     edition_id = mailpiece.edition_id
     db.delete(mailpiece)
     return RedirectResponse(f"/admin/editions/{edition_id}", status_code=303)
@@ -418,8 +406,8 @@ def export_labels(db: Db, edition: EditionById):
     columns = list(ADDRESS_FIELDS)
     rows = [
         [getattr(normalized_address, column) for column in columns]
-        for _, _, normalized_address in ready(
-            pending(edition, unsent_users(db, edition.id))
+        for _, _, normalized_address in recipients_ready_to_send(
+            unsent_recipients(db, edition)
         )
     ]
     return csv_response(f"edition-{edition.id}-to-send.csv", columns, rows)

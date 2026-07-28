@@ -332,30 +332,21 @@ def test_unsubscribed_excluded_from_edition_list(client, mailer):
     assert "Needs review" not in detail
 
 
-def test_late_signup_excluded_from_default_list_but_sendable(client, mailer):
+def test_signup_after_the_edition_is_left_off_it(client, mailer):
     csrf = admin_login(client)
     detail_url = create_edition(client, csrf)
     sign_up_and_verify(client, mailer)
+    normalize_current_address(client, csrf)
 
     detail = client.get(detail_url).text
     assert "To send (0)" in detail
-    assert "Signed up after this edition (1)" in detail
+    assert "Needs review" not in detail
 
     labels = client.get(f"{detail_url}/labels.csv")
     assert "Ada Lovelace" not in labels.text
 
-    normalize_current_address(client, csrf)
-    detail = client.get(detail_url).text
-    client.post(
-        f"{detail_url}/send/{sole_user_id(client)}",
-        data={
-            "csrf": csrf,
-            "normalized_address_id": normalized_address_id_from(detail),
-        },
-    )
-    detail = client.get(detail_url).text
-    assert "Sent (1)" in detail
-    assert "Signed up after this edition" not in detail
+    later = create_edition(client, csrf)
+    assert "To send (1)" in client.get(later).text
 
 
 def test_mark_sent_rejects_unsubscribed_user(client, mailer):
@@ -368,6 +359,22 @@ def test_mark_sent_rejects_unsubscribed_user(client, mailer):
     client.post(f"/admin/users/{user_id}/unsubscribe", data={"csrf": csrf})
     response = client.post(
         f"{detail_url}/send/{user_id}",
+        data={"csrf": csrf, "normalized_address_id": normalized_id},
+    )
+    assert response.status_code == 409
+    with Session(client.app.state.engine) as db:
+        assert db.scalars(select(Mailpiece)).all() == []
+
+
+def test_mark_sent_rejects_a_user_who_signed_up_after_the_edition(client, mailer):
+    csrf = admin_login(client)
+    earlier = create_edition(client, csrf)
+    sign_up_and_verify(client, mailer)
+    normalize_current_address(client, csrf)
+    later = create_edition(client, csrf)
+    normalized_id = normalized_address_id_from(client.get(later).text)
+    response = client.post(
+        f"{earlier}/send/{sole_user_id(client)}",
         data={"csrf": csrf, "normalized_address_id": normalized_id},
     )
     assert response.status_code == 409

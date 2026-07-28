@@ -83,22 +83,30 @@ Back up `data/`, `.env`, and `instance/` before updates.
 
 ## Usage Manual
 
+### Sign up and sign in
+
+The signup form and the sign-in form both send a 6-digit code, and the code
+is what creates the session. Signing up with an email that already has an
+account signs that account in, showing the address on file with a note that
+the account was already there; the account page is where addresses change.
+
 ### Create an edition
 
-At `/admin`, create an edition. The edition page splits eligible users into
-two groups. Needs review lists addresses awaiting a print version: Approve
+At `/admin`, create an edition. An edition goes to the subscribed users who
+signed up by the time it was created; later signups wait for the next one.
+The edition page splits them into two groups. Needs review lists addresses
+awaiting a print version: Approve
 files the address as entered, and Normalize opens a form to edit it first. To
 send lists users whose current address has a print version, with a CSV
 export for labels. Marking an item sent records the print version on the
-envelope; the account page keeps showing what the user entered. Users
-joining after the edition's creation appear separately and can be included
-deliberately.
+envelope; the account page keeps showing what the user entered.
 
 ### Data model
 
 - **users** — one row per verified email identity. `created_at` is the
-  verification moment; `unsubscribed_at` set means mail stops. Editions go
-  to users with `unsubscribed_at` unset. A signup's address travels in the
+  verification moment; `unsubscribed_at` set means mail stops. An edition
+  goes to users with `unsubscribed_at` unset whose `created_at` precedes the
+  edition's. A signup's address travels in the
   form until verification creates the user and their first address in one
   transaction.
 - **addresses** — every postal address a user entered, append-only; the

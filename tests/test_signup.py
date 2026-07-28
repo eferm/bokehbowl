@@ -302,7 +302,7 @@ def test_repeat_signup_verifies_with_the_latest_payload(client, mailer):
         assert address.city == "Arlington"
 
 
-def test_existing_user_signup_adds_no_address(client, mailer):
+def test_existing_user_signup_signs_in_and_keeps_the_saved_address(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = csrf_from(client.get("/").text)
     revised = {
@@ -311,10 +311,18 @@ def test_existing_user_signup_adds_no_address(client, mailer):
         "address_line1": "99 Other Road",
     }
     client.post("/signup", data={**revised, "csrf": csrf})
-    client.post(
+    response = client.post(
         "/signup/verify",
         data={**revised, "csrf": csrf, "code": mailer.last_code()},
+        follow_redirects=False,
     )
+    assert response.headers["location"] == "/account?existing=1"
+
+    account = client.get("/account?existing=1")
+    assert "You already had an account" in account.text
+    assert "12 Analytical Way" in account.text
+    assert "99 Other Road" not in account.text
+
     with Session(client.app.state.engine) as db:
         assert db.scalars(select(User)).one()
         address = db.scalars(select(Address)).one()

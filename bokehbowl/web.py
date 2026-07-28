@@ -180,6 +180,8 @@ def login(
     background: BackgroundTasks,
     form: Annotated[LoginForm, Form()],
 ):
+    """Emails a sign-in code to an address that has an account, then sends every
+    caller to the code form."""
     if volume_capped(db, utcnow()):
         return templates.TemplateResponse(
             request,
@@ -194,11 +196,11 @@ def login(
     existing = db.scalar(select(User).where(User.email == form.email))
     if existing is not None:
         send_login_code(db, mailer, form.email, background)
-    return RedirectResponse(f"/verify?email={form.email}", status_code=303)
+    return RedirectResponse(f"/login/verify?email={form.email}", status_code=303)
 
 
-@router.get("/verify")
-def verify_form(request: Request, templates: Templates, email: str):
+@router.get("/login/verify")
+def login_verify_form(request: Request, templates: Templates, email: str):
     return templates.TemplateResponse(
         request,
         "verify.html",
@@ -206,11 +208,11 @@ def verify_form(request: Request, templates: Templates, email: str):
     )
 
 
-def log_in(
-    request: Request, db: Session, user: User, now: datetime, *, created: bool
+def start_session(
+    request: Request, db: Session, user: User, now: datetime, *, destination: str
 ) -> RedirectResponse:
-    """A logged-in redirect to the account page: expired sessions pruned, a
-    fresh session minted and bound to the browser."""
+    """A redirect to the destination carrying a fresh session: expired sessions
+    pruned, a new one minted and bound to the browser."""
     db.execute(
         delete(UserSession).where(UserSession.created_at < now - USER_SESSION_TTL)
     )
@@ -221,7 +223,6 @@ def log_in(
     db.add(session)
     request.session["user_token"] = session.token
     db.commit()
-    destination = "/account?created=1" if created else "/account"
     return RedirectResponse(destination, status_code=303)
 
 
@@ -247,26 +248,26 @@ def signup_verify(
             status_code=422,
         )
     user = db.scalar(select(User).where(User.email == form.email))
-    created = user is None
-    if user is None:
-        user = register_user(
-            db,
-            form.email,
-            addressee=form.name,
-            address_line1=form.address_line1,
-            address_line2=form.address_line2,
-            city=form.city,
-            region=form.region,
-            postal_code=form.postal_code,
-            country=form.country,
-        )
-        background.add_task(
-            mailer.send,
-            to=request.app.state.config.notify_email,
-            subject=f"New signup: {form.name}",
-            body=f"{form.name} <{user.email}> signed up.",
-        )
-    return log_in(request, db, user, now, created=created)
+    if user is not None:
+        return start_session(request, db, user, now, destination="/account?existing=1")
+    user = register_user(
+        db,
+        form.email,
+        addressee=form.name,
+        address_line1=form.address_line1,
+        address_line2=form.address_line2,
+        city=form.city,
+        region=form.region,
+        postal_code=form.postal_code,
+        country=form.country,
+    )
+    background.add_task(
+        mailer.send,
+        to=request.app.state.config.notify_email,
+        subject=f"New signup: {form.name}",
+        body=f"{form.name} <{user.email}> signed up.",
+    )
+    return start_session(request, db, user, now, destination="/account?created=1")
 
 
 @router.post("/login/verify")
@@ -291,7 +292,7 @@ def login_verify(
     user = db.scalar(select(User).where(User.email == form.email))
     if user is None:
         raise LoginRequired()
-    return log_in(request, db, user, now, created=False)
+    return start_session(request, db, user, now, destination="/account")
 
 
 @router.get("/account")
@@ -303,6 +304,7 @@ def account(request: Request, db: Db, templates: Templates, user: CurrentUser):
             "user": user,
             "address": latest_address(db, user.id),
             "created": request.query_params.get("created") == "1",
+            "existing": request.query_params.get("existing") == "1",
             "saved": "saved" in request.query_params,
             "editing": "edit" in request.query_params,
         },
