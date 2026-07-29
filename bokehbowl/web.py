@@ -28,6 +28,7 @@ from bokehbowl.auth import (
     volume_capped,
 )
 from bokehbowl.db import (
+    AddressComponents,
     User,
     UserSession,
     latest_address,
@@ -121,6 +122,19 @@ class AddressForm(BaseModel):
     @classmethod
     def blank_to_none(cls, value: str | None) -> str | None:
         return value or None
+
+    @property
+    def components(self) -> AddressComponents:
+        """The submitted address, as a value."""
+        return AddressComponents(
+            addressee=self.name,
+            address_line1=self.address_line1,
+            address_line2=self.address_line2,
+            city=self.city,
+            region=self.region,
+            postal_code=self.postal_code,
+            country=self.country,
+        )
 
 
 class SignupForm(AddressForm):
@@ -315,17 +329,7 @@ def signup_verify(
     user = db.scalar(select(User).where(User.email == form.email))
     if user is not None:
         return start_session(request, db, user, now, destination="/account?existing=1")
-    user = register_user(
-        db,
-        form.email,
-        addressee=form.name,
-        address_line1=form.address_line1,
-        address_line2=form.address_line2,
-        city=form.city,
-        region=form.region,
-        postal_code=form.postal_code,
-        country=form.country,
-    )
+    user = register_user(db, form.email, form.components)
     background.add_task(
         mailer.send,
         to=request.app.state.config.notify_email,
@@ -399,17 +403,7 @@ def update_account(
     user: CurrentUser,
     form: Annotated[AddressForm, Form()],
 ):
-    record_address(
-        db,
-        user.id,
-        addressee=form.name,
-        address_line1=form.address_line1,
-        address_line2=form.address_line2,
-        city=form.city,
-        region=form.region,
-        postal_code=form.postal_code,
-        country=form.country,
-    )
+    record_address(db, user.id, form.components)
     return RedirectResponse("/account?saved=1", status_code=303)
 
 

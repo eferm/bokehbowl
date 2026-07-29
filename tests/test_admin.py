@@ -1,4 +1,5 @@
 import re
+from typing import get_args, get_type_hints
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,7 +7,15 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from bokehbowl.db import Address, Mailpiece, NormalizedAddress, User, utcnow
+from bokehbowl.db import (
+    ADDRESS_FIELDS,
+    Address,
+    AddressComponents,
+    Mailpiece,
+    NormalizedAddress,
+    User,
+    utcnow,
+)
 from tests.conftest import ADMIN_PASSWORD, SIGNUP_FORM, csrf_from, sign_up_and_verify
 
 
@@ -545,6 +554,22 @@ def test_renormalizing_appends_and_the_latest_normalized_address_wins(client, ma
     labels = client.get(f"{detail_url}/labels.csv").text
     assert "Flat 4" in labels
     assert "Flat 3" not in labels
+
+
+def test_the_address_components_value_matches_the_stored_columns():
+    """AddressComponents is what the two address tables compare and store: its
+    fields are exactly the address columns they carry, and the fields it marks
+    optional are the columns that are nullable."""
+    optional = {
+        name
+        for name, hint in get_type_hints(AddressComponents).items()
+        if type(None) in get_args(hint)
+    }
+    for table in (Address, NormalizedAddress):
+        columns = {column.name: column for column in table.__table__.columns}
+        stored = set(columns) - {"id", "user_id", "address_id", "created_at"}
+        assert set(ADDRESS_FIELDS) == stored
+        assert optional == {name for name in stored if columns[name].nullable}
 
 
 def test_normalize_route_unknown_address_is_404(client, mailer):

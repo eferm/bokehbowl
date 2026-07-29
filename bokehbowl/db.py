@@ -1,5 +1,6 @@
 """Database models. SQLite dialect only."""
 
+from dataclasses import asdict, dataclass, fields
 from datetime import UTC, datetime
 from uuid6 import uuid7
 
@@ -15,7 +16,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
-    MappedColumn,
     Session,
     mapped_column,
     relationship,
@@ -36,6 +36,24 @@ class Base(DeclarativeBase):
     pass
 
 
+@dataclass(frozen=True)
+class AddressComponents:
+    """A postal address as a value: the parts an envelope prints. Two addresses
+    with the same parts are equal."""
+
+    addressee: str
+    address_line1: str
+    address_line2: str | None
+    city: str
+    region: str | None
+    postal_code: str
+    country: str
+
+
+ADDRESS_FIELDS = tuple(field.name for field in fields(AddressComponents))
+"""The address column names, in declaration order."""
+
+
 class AddressMixin:
     """The components of a postal address. Each table that stores one inherits
     these columns, so the shape is identical everywhere."""
@@ -48,13 +66,18 @@ class AddressMixin:
     postal_code: Mapped[str] = mapped_column(String(20))
     country: Mapped[str] = mapped_column(String(120))
 
-
-ADDRESS_FIELDS = tuple(
-    name
-    for name, attribute in vars(AddressMixin).items()
-    if isinstance(attribute, MappedColumn)
-)
-"""The address column names, in declaration order."""
+    @property
+    def components(self) -> AddressComponents:
+        """The stored address, as a value."""
+        return AddressComponents(
+            addressee=self.addressee,
+            address_line1=self.address_line1,
+            address_line2=self.address_line2,
+            city=self.city,
+            region=self.region,
+            postal_code=self.postal_code,
+            country=self.country,
+        )
 
 
 class User(Base):
@@ -203,81 +226,19 @@ def latest_normalized_address(
     ).first()
 
 
-def record_address(
-    db: Session,
-    user_id: str,
-    *,
-    addressee: str,
-    address_line1: str,
-    address_line2: str | None,
-    city: str,
-    region: str | None,
-    postal_code: str,
-    country: str,
-) -> None:
+def record_address(db: Session, user_id: str, submitted: AddressComponents) -> None:
     """Append an address unless the user's latest address is identical."""
-    current = latest_address(db, user_id)
-    incoming = (
-        addressee,
-        address_line1,
-        address_line2,
-        city,
-        region,
-        postal_code,
-        country,
-    )
-    if incoming == (
-        current.addressee,
-        current.address_line1,
-        current.address_line2,
-        current.city,
-        current.region,
-        current.postal_code,
-        current.country,
-    ):
+    if submitted == latest_address(db, user_id).components:
         return
-    db.add(
-        Address(
-            user_id=user_id,
-            addressee=addressee,
-            address_line1=address_line1,
-            address_line2=address_line2,
-            city=city,
-            region=region,
-            postal_code=postal_code,
-            country=country,
-        )
-    )
+    db.add(Address(user_id=user_id, **asdict(submitted)))
 
 
-def register_user(
-    db: Session,
-    email: str,
-    *,
-    addressee: str,
-    address_line1: str,
-    address_line2: str | None,
-    city: str,
-    region: str | None,
-    postal_code: str,
-    country: str,
-) -> User:
+def register_user(db: Session, email: str, submitted: AddressComponents) -> User:
     """Create a user and their first address, in one transaction."""
     user = User(email=email)
     db.add(user)
     db.flush()
-    db.add(
-        Address(
-            user_id=user.id,
-            addressee=addressee,
-            address_line1=address_line1,
-            address_line2=address_line2,
-            city=city,
-            region=region,
-            postal_code=postal_code,
-            country=country,
-        )
-    )
+    db.add(Address(user_id=user.id, **asdict(submitted)))
     return user
 
 
