@@ -25,6 +25,7 @@ from bokehbowl.db import (
     UserSession,
     latest_address,
     latest_normalized_address,
+    record_normalized_address,
     utcnow,
 )
 from bokehbowl.web import AddressForm, Db, Templates
@@ -423,17 +424,6 @@ def normalize_address(
     address: AddressById,
     form: Annotated[NormalizeForm, Form()],
 ):
-    db.add(
-        NormalizedAddress(
-            address_id=address.id,
-            addressee=form.name,
-            address_line1=form.address_line1,
-            address_line2=form.address_line2,
-            city=form.city,
-            region=form.region,
-            postal_code=form.postal_code,
-            country=form.country,
-        )
-    )
+    record_normalized_address(db, address, form.components)
     destination = f"/admin/editions/{form.edition}" if form.edition else "/admin"
     return RedirectResponse(destination, status_code=303)

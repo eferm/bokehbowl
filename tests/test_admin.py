@@ -76,6 +76,20 @@ def normalize_current_address(client, csrf, **overrides) -> None:
     assert response.status_code == 303
 
 
+def submit_normalize_form_as_prefilled(client, address_id: str) -> None:
+    """Save the admin normalize form back exactly as the page served it."""
+    page = client.get(f"/admin/addresses/{address_id}/normalize").text
+    start = page.index('<form class="form-stack"')
+    form = page[start : page.index("</form>", start)]
+    fields = dict(re.findall(r'name="([^"]+)"(?: value="([^"]*)")?', form))
+    response = client.post(
+        f"/admin/addresses/{address_id}/normalize",
+        data=fields,
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+
 def admin_login(client) -> str:
     csrf = csrf_from(client.get("/admin/login").text)
     response = client.post(
@@ -570,6 +584,23 @@ def test_the_address_components_value_matches_the_stored_columns():
         stored = set(columns) - {"id", "user_id", "address_id", "created_at"}
         assert set(ADDRESS_FIELDS) == stored
         assert optional == {name for name in stored if columns[name].nullable}
+
+
+def test_saving_the_normalize_form_untouched_appends_no_print_version(client, mailer):
+    """Approve files the address as entered. Opening Normalize afterwards
+    prefills that print version, so saving it untouched submits what is already
+    on file."""
+    sign_up_and_verify(client, mailer)
+    csrf = admin_login(client)
+    normalize_current_address(client, csrf)
+    with Session(client.app.state.engine) as db:
+        address_id = db.scalars(select(Address.id)).one()
+
+    submit_normalize_form_as_prefilled(client, address_id)
+
+    with Session(client.app.state.engine) as db:
+        filed = db.scalars(select(NormalizedAddress)).one()
+        assert filed.address_line1 == "12 Analytical Way"
 
 
 def test_normalize_route_unknown_address_is_404(client, mailer):

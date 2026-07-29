@@ -233,6 +233,17 @@ def record_address(db: Session, user_id: str, submitted: AddressComponents) -> N
     db.add(Address(user_id=user_id, **asdict(submitted)))
 
 
+def record_normalized_address(
+    db: Session, address: Address, submitted: AddressComponents
+) -> None:
+    """Append a print version of the address unless its latest print version is
+    identical."""
+    current = latest_normalized_address(db, address)
+    if current is not None and submitted == current.components:
+        return
+    db.add(NormalizedAddress(address_id=address.id, **asdict(submitted)))
+
+
 def register_user(db: Session, email: str, submitted: AddressComponents) -> User:
     """Create a user and their first address, in one transaction."""
     user = User(email=email)
