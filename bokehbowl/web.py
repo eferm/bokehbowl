@@ -70,14 +70,23 @@ Templates = Annotated[Jinja2Templates, Depends(get_templates)]
 Mail = Annotated[Mailer, Depends(get_mailer)]
 
 
-def require_user(request: Request, db: Db) -> User:
+def live_session(db: Session, request: Request) -> UserSession | None:
+    """The browser's session, while its token names a row younger than
+    USER_SESSION_TTL. The one definition of a signed-in browser; the pages that
+    need a user and the nav that offers to sign one out both ask it."""
     user_token = request.session.get("user_token")
     if not isinstance(user_token, str):
-        raise LoginRequired()
+        return None
     session = db.get(UserSession, user_token)
+    if session is None or session.created_at < utcnow() - USER_SESSION_TTL:
+        return None
+    return session
+
+
+def require_user(request: Request, db: Db) -> User:
+    session = live_session(db, request)
     if session is None:
-        raise LoginRequired()
-    if session.created_at < utcnow() - USER_SESSION_TTL:
+        request.session.pop("user_token", None)
         raise LoginRequired()
     return session.user
 

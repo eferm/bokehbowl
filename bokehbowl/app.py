@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Engine
+from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.staticfiles import StaticFiles
 
@@ -15,7 +16,7 @@ from bokehbowl.admin import router as admin_router
 from bokehbowl.auth import code_attempt_throttle, code_request_throttle, csrf_token
 from bokehbowl.config import AppConfig
 from bokehbowl.mailer import Mailer
-from bokehbowl.web import LoginRequired
+from bokehbowl.web import LoginRequired, live_session
 from bokehbowl.web import router as web_router
 
 
@@ -39,9 +40,15 @@ class InstanceStaticFiles(StaticFiles):
         return self.lookup_path(path)[1] is not None
 
 
-def template_context(request: Request) -> dict[str, str | int]:
+def template_context(request: Request) -> dict[str, str | int | bool]:
     """Expose request-specific values to every rendered template."""
-    return {"csrf": csrf_token(request), "current_year": date.today().year}
+    with Session(request.app.state.engine) as db:
+        signed_in = live_session(db, request) is not None
+    return {
+        "csrf": csrf_token(request),
+        "current_year": date.today().year,
+        "signed_in": signed_in,
+    }
 
 
 def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:

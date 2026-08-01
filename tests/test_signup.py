@@ -5,7 +5,7 @@ from email.message import EmailMessage
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from bokehbowl import auth, web
@@ -39,6 +39,45 @@ def test_first_signup_shows_confirmation(client, mailer):
 def test_authenticated_header_offers_sign_out(client, mailer):
     sign_up_and_verify(client, mailer)
     assert "Sign out" in client.get("/").text
+
+
+def test_header_offers_sign_out_while_the_session_row_lives(client, mailer):
+    """The cookie outlives the row it names when the database is recreated, so
+    the header asks the database rather than the cookie."""
+    sign_up_and_verify(client, mailer)
+    with Session(client.app.state.engine) as db:
+        db.execute(delete(UserSession))
+        db.commit()
+
+    assert "Sign out" not in client.get("/").text
+    assert client.get("/account", follow_redirects=False).status_code == 303
+
+
+def test_header_offers_sign_out_while_the_session_is_young(client, mailer):
+    sign_up_and_verify(client, mailer)
+    with Session(client.app.state.engine) as db:
+        db.execute(
+            update(UserSession).values(
+                created_at=utcnow() - web.USER_SESSION_TTL - timedelta(days=1)
+            )
+        )
+        db.commit()
+
+    assert "Sign out" not in client.get("/").text
+    assert client.get("/account", follow_redirects=False).status_code == 303
+
+
+def test_a_page_needing_a_user_drops_a_dead_token(client, mailer):
+    """The browser stops carrying a token no session answers to."""
+    sign_up_and_verify(client, mailer)
+    with Session(client.app.state.engine) as db:
+        db.execute(delete(UserSession))
+        db.commit()
+
+    client.get("/account")
+    encoded = client.cookies["session"].split(".")[0]
+    payload = json.loads(base64.b64decode(encoded + "=" * (-len(encoded) % 4)))
+    assert "user_token" not in payload
 
 
 def test_session_cookie_carries_token(client, mailer):
