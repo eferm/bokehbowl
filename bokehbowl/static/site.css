@@ -4,11 +4,11 @@
   --ink: #11110f;
   --rule: #d7d7d2;
   --muted: #8b8b83;
-  --button-background: var(--ink);
-  --button-foreground: var(--paper);
-  --button-hover: #31312d;
-  --button-link-background: #e7e7e2;
-  --button-link-hover: #dcdcd6;
+  --action-background: var(--ink);
+  --action-foreground: var(--paper);
+  --action-hover: #31312d;
+  --navigation-control-background: #e7e7e2;
+  --navigation-control-hover: #dcdcd6;
   --page-space: clamp(4rem, 11vw, 10rem);
 }
 
@@ -29,11 +29,11 @@ body.photo-theme {
   --ink: #fff;
   --rule: rgb(255 255 255 / 62%);
   --muted: rgb(255 255 255 / 72%);
-  --button-background: rgb(255 255 255 / 90%);
-  --button-foreground: #494945;
-  --button-hover: #fff;
-  --button-link-background: rgb(255 255 255 / 20%);
-  --button-link-hover: rgb(255 255 255 / 32%);
+  --action-background: rgb(255 255 255 / 90%);
+  --action-foreground: #494945;
+  --action-hover: #fff;
+  --navigation-control-background: rgb(255 255 255 / 20%);
+  --navigation-control-hover: rgb(255 255 255 / 32%);
 }
 
 body.photo-theme::before {
@@ -411,8 +411,6 @@ button,
   padding: 0.7rem 1rem;
   border: 0;
   border-radius: 0;
-  background-color: var(--button-background);
-  color: var(--button-foreground);
   font-family: inherit;
   font-size: 0.78rem;
   font-weight: 700;
@@ -425,12 +423,17 @@ button,
     scale 100ms ease-out;
 }
 
+button {
+  background-color: var(--action-background);
+  color: var(--action-foreground);
+}
+
 .home .signup button {
   margin-top: 0.35rem;
 }
 
 button:hover {
-  background-color: var(--button-hover);
+  background-color: var(--action-hover);
 }
 
 button:active,
@@ -441,13 +444,13 @@ button:active,
 .button-link {
   display: inline-flex;
   align-items: center;
-  background-color: var(--button-link-background);
+  background-color: var(--navigation-control-background);
   color: var(--ink);
   text-decoration: none;
 }
 
 .button-link:hover {
-  background-color: var(--button-link-hover);
+  background-color: var(--navigation-control-hover);
 }
 
 .site-header a:focus-visible,
