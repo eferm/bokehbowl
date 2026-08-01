@@ -80,6 +80,9 @@ def submit_normalize_form_as_prefilled(client, address_id: str) -> None:
     start = page.index('<form class="form-stack"')
     form = page[start : page.index("</form>", start)]
     fields = dict(re.findall(r'name="([^"]+)"(?: value="([^"]*)")?', form))
+    fields["country"] = re.search(
+        r'<option value="([^"]+)" selected>', form
+    ).group(1)
     response = client.post(
         f"/admin/addresses/{address_id}/normalize",
         data=fields,

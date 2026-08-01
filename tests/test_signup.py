@@ -24,6 +24,27 @@ def test_signup_sends_code_and_verify_logs_in(client, mailer):
     assert "Postal Code" in account.text
 
 
+def test_country_dropdown_uses_cldr_names(client):
+    page = client.get("/").text
+    assert '<select class="form-control" name="country" required' in page
+    assert '<option value="Sweden">Sweden</option>' in page
+    assert '<option value="United States">United States</option>' in page
+    assert '<option value="Congo - Kinshasa">Congo - Kinshasa</option>' in page
+    assert '<option value="United Kingdom">United Kingdom</option>' in page
+    assert 'name="country" type="text"' not in page
+    assert page.index("Afghanistan") < page.index("Åland Islands")
+    assert page.index("Åland Islands") < page.index("Albania")
+
+
+def test_signup_rejects_a_country_outside_the_dropdown(client, mailer):
+    csrf = csrf_from(client.get("/").text)
+    response = client.post(
+        "/signup", data={**SIGNUP_FORM, "country": "Sverige", "csrf": csrf}
+    )
+    assert response.status_code == 422
+    assert mailer.sent == []
+
+
 def test_first_signup_shows_confirmation(client, mailer):
     csrf = csrf_from(client.get("/").text)
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
@@ -436,7 +457,7 @@ def test_signup_folds_pasted_whitespace_into_single_spaces(client, mailer):
 
 
 def test_signup_keeps_non_ascii_names_and_addresses(client, mailer):
-    form = {**SIGNUP_FORM, "name": "Åsa Öberg", "city": "Malmö", "country": "Sverige"}
+    form = {**SIGNUP_FORM, "name": "Åsa Öberg", "city": "Malmö", "country": "Sweden"}
     csrf = csrf_from(client.get("/").text)
     client.post("/signup", data={**form, "csrf": csrf})
     response = client.post(
@@ -450,6 +471,7 @@ def test_signup_keeps_non_ascii_names_and_addresses(client, mailer):
         address = db.scalars(select(Address)).one()
         assert address.addressee == "Åsa Öberg"
         assert address.city == "Malmö"
+        assert address.country == "Sweden"
     subject = mailer.sent[-1][1]
     assert subject == "New signup: Åsa Öberg"
     EmailMessage()["Subject"] = subject

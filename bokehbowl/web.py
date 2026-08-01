@@ -3,6 +3,7 @@
 import secrets
 from collections.abc import Iterator
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
@@ -37,6 +38,11 @@ from bokehbowl.mailer import Mailer
 
 
 USER_SESSION_TTL = timedelta(days=30)
+COUNTRIES = tuple(
+    (Path(__file__).parent / "resources" / "countries.txt")
+    .read_text(encoding="utf-8")
+    .splitlines()
+)
 
 
 class LoginRequired(Exception):
@@ -123,6 +129,13 @@ class AddressForm(BaseModel):
     @classmethod
     def blank_to_none(cls, value: str | None) -> str | None:
         return value or None
+
+    @field_validator("country")
+    @classmethod
+    def country_name(cls, value: str) -> str:
+        if value not in COUNTRIES:
+            raise ValueError("is not a supported mailing country name")
+        return value
 
     @property
     def components(self) -> AddressComponents:

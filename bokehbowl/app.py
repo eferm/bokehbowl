@@ -16,7 +16,7 @@ from bokehbowl.admin import router as admin_router
 from bokehbowl.auth import csrf_token
 from bokehbowl.config import AppConfig
 from bokehbowl.mailer import Mailer
-from bokehbowl.web import LoginRequired, live_session
+from bokehbowl.web import COUNTRIES, LoginRequired, live_session
 from bokehbowl.web import router as web_router
 
 
@@ -66,6 +66,7 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
         operator_email=config.operator_email,
         app_commit=config.commit,
         has_backdrop=static.has("background.webp"),
+        countries=COUNTRIES,
     )
     app.state.templates = templates
 

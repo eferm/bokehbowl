@@ -117,7 +117,8 @@ or records the chosen users as rows when the edition is created.
   form until verification creates the user and their first address in one
   transaction.
 - **addresses** — every postal address a user entered, append-only; the
-  latest row is current and is what the account page shows.
+  latest row is current and is what the account page shows. Countries use
+  CLDR's English territory names.
 - **normalized_addresses** — operator-approved print versions, each pinned to
   one address row, append-only. An envelope prints the latest normalized
   version of its address; an address with one is ready to send.
@@ -145,6 +146,17 @@ Each invariant lives at a named enforcement layer:
   every connection.
 
 ## Development
+
+### Country data
+
+The app reads one country name per line from
+`bokehbowl/resources/countries.txt`. CLDR's English locale data is archived at
+`sources/unicode-org/en.xml`, with its retrieval metadata, license, and
+checksum in `sources/sources.json`. Regenerate the runtime data with:
+
+```sh
+python scripts/parse_cldr_countries.py
+```
 
 ```sh
 uv run pytest

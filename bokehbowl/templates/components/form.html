@@ -13,6 +13,13 @@
   <label class="form-label">City <input class="form-control" name="city"{% if address %} value="{{ address.city }}"{% endif %} required {{ autocomplete_attr("address-level2", autofill) }}></label>
   <label class="form-label">State / Province <input class="form-control" name="region"{% if address %} value="{{ address.region or '' }}"{% endif %} {{ autocomplete_attr("address-level1", autofill) }} placeholder="If applicable"></label>
   <label class="form-label">Postal Code <input class="form-control" name="postal_code"{% if address %} value="{{ address.postal_code }}"{% endif %} required {{ autocomplete_attr("postal-code", autofill) }}></label>
-  <label class="form-label">Country <input class="form-control" name="country"{% if address %} value="{{ address.country }}"{% endif %} required {{ autocomplete_attr("country-name", autofill) }} placeholder="I mail worldwide"></label>
+  <label class="form-label">Country
+    <select class="form-control" name="country" required {{ autocomplete_attr("country-name", autofill) }}>
+      <option value=""{% if not address %} selected{% endif %} disabled>Select a country</option>
+      {% for name in countries %}
+      <option value="{{ name }}"{% if address and address.country == name %} selected{% endif %}>{{ name }}</option>
+      {% endfor %}
+    </select>
+  </label>
 </fieldset>
 {% endmacro %}

@@ -1,0 +1,8 @@
+{
+  "unicode-org/en.xml": {
+    "retrieved": "2026-08-01",
+    "url": "https://raw.githubusercontent.com/unicode-org/cldr/b18fa63b3f9b3ed68bdc31efaa6bc5f4a73a9671/common/main/en.xml",
+    "license": "Unicode-3.0",
+    "sha256": "b34d3f9b589a546d7be8d8dbcc3838c88eda9cab8f29fe6e68075982a6a33454"
+  }
+}
