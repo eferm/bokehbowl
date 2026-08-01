@@ -108,6 +108,14 @@ send lists users whose current address has a print version, with a CSV
 export for labels. Marking an item sent records the print version on the
 envelope; the account page keeps showing what the user entered.
 
+The list is computed on each view, and the two halves of it are read at
+different moments by design: the signup cutoff is fixed at the edition's
+creation, while subscription is read as it stands now. Someone who
+unsubscribes between an edition's creation and its send leaves that edition's
+list, and mailpieces already recorded stay. A subscription model that freezes
+the list at creation compares `unsubscribed_at` to the edition's `created_at`,
+or records the chosen users as rows when the edition is created.
+
 ### Data model
 
 - **users** — one row per verified email identity. `created_at` is the
