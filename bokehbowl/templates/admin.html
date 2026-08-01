@@ -44,7 +44,19 @@
         {% endif %}
       </td>
       {% elif table == "editions" %}
-      <td><a class="button-link" href="/admin/editions/{{ row[0] }}">Open</a></td>
+      <td>
+        {% if row[columns.index("deleted_at")] %}
+        Deleted
+        {% else %}
+        <div class="table-actions">
+          <a class="button-link" href="/admin/editions/{{ row[0] }}">Open</a>
+          <form method="post" action="/admin/editions/{{ row[0] }}/delete">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit">Delete</button>
+          </form>
+        </div>
+        {% endif %}
+      </td>
       {% endif %}
     </tr>
     {% else %}

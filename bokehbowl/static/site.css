@@ -169,6 +169,12 @@ a {
   margin: 0;
 }
 
+.table-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 .admin td button,
 .admin td .button-link {
   min-height: 2rem;

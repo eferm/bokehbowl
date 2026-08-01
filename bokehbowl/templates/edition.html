@@ -34,6 +34,10 @@
 <p><a href="/admin?table=editions">&larr; all editions</a></p>
 <h1>{{ edition.title }}</h1>
 <p>Created {{ edition.created_at.date() }}.</p>
+<form method="post" action="/admin/editions/{{ edition.id }}/delete">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button type="submit">Delete edition</button>
+</form>
 
 {% if needs_review %}
 <h2>Needs review ({{ needs_review | length }})</h2>

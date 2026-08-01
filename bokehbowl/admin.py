@@ -97,7 +97,12 @@ def require_user(_: AdminOnly, db: Db, user_id: str) -> User:
 
 
 def require_edition(_: AdminOnly, db: Db, edition_id: str) -> Edition:
-    edition = db.get(Edition, edition_id)
+    edition = db.scalar(
+        select(Edition).where(
+            Edition.id == edition_id,
+            Edition.deleted_at.is_(None),
+        )
+    )
     if edition is None:
         raise HTTPException(status_code=404)
     return edition
@@ -194,8 +199,8 @@ def dashboard(
 ):
     model, timestamp = require_table(table)
     counts = {
-        name: db.scalar(select(func.count()).select_from(m))
-        for name, (m, _) in TABLES.items()
+        name: db.scalar(select(func.count()).select_from(model))
+        for name, (model, _) in TABLES.items()
     }
     return templates.TemplateResponse(
         request,
@@ -321,6 +326,12 @@ def create_edition(
     db.add(edition)
     db.flush()
     return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)
+
+
+@router.post("/editions/{edition_id}/delete")
+def delete_edition(edition: EditionById):
+    edition.deleted_at = utcnow()
+    return RedirectResponse("/admin?table=editions", status_code=303)
 
 
 @router.get("/editions/{edition_id}")

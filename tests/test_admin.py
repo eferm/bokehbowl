@@ -10,6 +10,7 @@ from bokehbowl.db import (
     ADDRESS_FIELDS,
     Address,
     AddressComponents,
+    Edition,
     Mailpiece,
     NormalizedAddress,
     User,
@@ -172,6 +173,28 @@ def test_editions_table_renders_empty(client, mailer):
     page = client.get("/admin?table=editions")
     assert "<th>title</th>" in page.text
     assert "Nothing here yet." in page.text
+
+
+def test_deleting_an_edition_archives_it(client, mailer):
+    csrf = admin_login(client)
+    detail_url = create_edition(client, csrf, title="temporary edition")
+    edition_id = detail_url.rsplit("/", maxsplit=1)[-1]
+
+    response = client.post(
+        f"{detail_url}/delete", data={"csrf": csrf}, follow_redirects=False
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin?table=editions"
+    table = client.get("/admin?table=editions").text
+    assert "temporary edition" in table
+    assert "Deleted" in table
+    assert f'href="{detail_url}"' not in table
+    assert client.get(detail_url).status_code == 404
+
+    with Session(client.app.state.engine) as db:
+        edition = db.get(Edition, edition_id)
+        assert edition is not None
+        assert edition.deleted_at is not None
 
 
 def test_mailpieces_table_renders_empty(client, mailer):

@@ -123,6 +123,8 @@ or records the chosen users as rows when the edition is created.
   one address row, append-only. An envelope prints the latest normalized
   version of its address; an address with one is ready to send.
 - **editions** — one print run (a postcard design, a photo, a letter).
+  `deleted_at` set archives it from operational routes while the raw admin
+  table keeps the row visible.
 - **mailpieces** — one physical piece of mail: an edition sent to one user,
   pinned to the normalized row printed on the envelope.
 

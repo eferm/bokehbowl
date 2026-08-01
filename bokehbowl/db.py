@@ -147,13 +147,14 @@ class NormalizedAddress(AddressMixin, Base):
 
 class Edition(Base):
     """One print run mailed to many users — a postcard design, a photo, a letter.
-    Each physical copy sent is a Mailpiece."""
+    Each physical copy sent is a Mailpiece. deleted_at set archives the edition."""
 
     __tablename__ = "editions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    deleted_at: Mapped[datetime | None]
 
     mailpieces: Mapped[list["Mailpiece"]] = relationship(back_populates="edition")
 
