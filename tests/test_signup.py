@@ -24,6 +24,13 @@ def test_signup_sends_code_and_verify_logs_in(client, mailer):
     assert "Postal Code" in account.text
 
 
+def test_signed_in_header_shows_account(client, mailer):
+    sign_up_and_verify(client, mailer)
+    page = client.get("/").text
+    assert '<a href="/account">Account</a>' in page
+    assert '<a href="/login">Log In</a>' not in page
+
+
 def test_country_dropdown_uses_cldr_names(client):
     page = client.get("/").text
     assert '<select class="form-control" name="country" required' in page

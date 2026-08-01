@@ -7,6 +7,8 @@ def test_home_page_uses_gallery_design(client):
     assert "Photographs are better on paper." in page
     assert "<title>Bokehbowl: Photo Prints, Mailed Occasionally</title>" in page
     assert f"© {date.today().year} Testy Operator" in page
+    assert '<a href="/login">Log In</a>' in page
+    assert '<a href="/account">Account</a>' not in page
 
 
 def test_site_stylesheet_served(client):

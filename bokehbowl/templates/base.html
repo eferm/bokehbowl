@@ -22,12 +22,14 @@
   <header class="site-header">
     <a class="site-brand" href="/">bokehbowl</a>
     <nav class="site-nav">
-      <a href="/account">Account</a>
       {% if signed_in %}
+      <a href="/account">Account</a>
       <form class="header-signout" method="post" action="/logout">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <button type="submit">Sign out</button>
       </form>
+      {% else %}
+      <a href="/login">Log In</a>
       {% endif %}
     </nav>
   </header>
