@@ -15,6 +15,7 @@ from pydantic import (
     ConfigDict,
     EmailStr,
     Field,
+    StringConstraints,
     field_validator,
 )
 from sqlalchemy import delete, select
@@ -99,6 +100,15 @@ def normalize_email(raw: str) -> str:
 
 
 NormalizedEmail = Annotated[EmailStr, BeforeValidator(normalize_email)]
+VerificationCode = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=6,
+        max_length=6,
+        pattern=r"^[0-9]{6}$",
+    ),
+]
 
 
 class AddressForm(BaseModel):
@@ -107,15 +117,24 @@ class AddressForm(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    name: str = Field(max_length=200)
-    address_line1: str = Field(max_length=200)
+    name: str = Field(min_length=1, max_length=200)
+    address_line1: str = Field(min_length=1, max_length=200)
     address_line2: str | None = Field(default=None, max_length=200)
-    city: str = Field(max_length=120)
+    city: str = Field(min_length=1, max_length=120)
     region: str | None = Field(default=None, max_length=120)
-    postal_code: str = Field(max_length=20)
-    country: str = Field(max_length=120)
+    postal_code: str = Field(min_length=1, max_length=20)
+    country: str = Field(min_length=1, max_length=120)
 
-    @field_validator("*")
+    @field_validator(
+        "name",
+        "address_line1",
+        "address_line2",
+        "city",
+        "region",
+        "postal_code",
+        "country",
+        mode="before",
+    )
     @classmethod
     def single_line(cls, value: str | None) -> str | None:
         if value is None:
@@ -169,14 +188,14 @@ class VerifyForm(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     email: NormalizedEmail
-    code: str
+    code: VerificationCode
 
 
 class SignupVerifyForm(SignupForm):
     """A signup code submission: the signup payload plus the code sent to its
     email."""
 
-    code: str
+    code: VerificationCode
 
 
 @router.get("/")
@@ -226,12 +245,14 @@ def login(
 
 
 @router.get("/login/verify")
-def login_verify_form(request: Request, templates: Templates, email: str):
+def login_verify_form(
+    request: Request, templates: Templates, email: NormalizedEmail
+):
     return templates.TemplateResponse(
         request,
         "verify.html",
         {
-            "email": normalize_email(email),
+            "email": email,
             "error": None,
             "signup": None,
             "code_outstanding": True,

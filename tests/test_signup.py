@@ -162,6 +162,23 @@ def test_email_is_normalized_and_not_duplicated(client, mailer):
     assert to == "ada@example.com"
 
 
+def test_internationalized_email_is_supported(client, mailer):
+    form = {**SIGNUP_FORM, "email": "José@Example.com"}
+    csrf = csrf_from(client.get("/").text)
+    signup = client.post("/signup", data={**form, "csrf": csrf})
+    assert signup.status_code == 200
+    assert mailer.sent[-1][0] == "josé@example.com"
+
+    verify = client.post(
+        "/signup/verify",
+        data={**form, "csrf": csrf, "code": mailer.last_code()},
+        follow_redirects=False,
+    )
+    assert verify.status_code == 303
+    with Session(client.app.state.engine) as db:
+        assert db.scalars(select(User.email)).one() == "josé@example.com"
+
+
 def test_wrong_code_rejected(client, mailer):
     csrf = csrf_from(client.get("/").text)
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
@@ -171,6 +188,24 @@ def test_wrong_code_rejected(client, mailer):
     )
     assert response.status_code == 422
     assert client.get("/account", follow_redirects=False).status_code == 303
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["", "12345", "1234567", "abcdef", "１２３４５６", "123\n456"],
+)
+def test_verification_codes_are_exactly_six_ascii_digits(client, code):
+    csrf = csrf_from(client.get("/").text)
+    login = client.post(
+        "/login/verify",
+        data={"csrf": csrf, "email": "ada@example.com", "code": code},
+    )
+    signup = client.post(
+        "/signup/verify",
+        data={**SIGNUP_FORM, "csrf": csrf, "code": code},
+    )
+    assert login.status_code == 422
+    assert signup.status_code == 422
 
 
 def test_wrong_codes_do_not_invalidate_the_correct_code(client, mailer):
@@ -366,6 +401,18 @@ def test_oversized_field_rejected(client, mailer):
     csrf = csrf_from(client.get("/").text)
     response = client.post(
         "/signup", data={**SIGNUP_FORM, "name": "A" * 10_000, "csrf": csrf}
+    )
+    assert response.status_code == 422
+    assert mailer.sent == []
+
+
+@pytest.mark.parametrize(
+    "field", ["name", "address_line1", "city", "postal_code", "country"]
+)
+def test_signup_rejects_a_blank_required_address_field(client, mailer, field):
+    csrf = csrf_from(client.get("/").text)
+    response = client.post(
+        "/signup", data={**SIGNUP_FORM, field: " \t\r\n ", "csrf": csrf}
     )
     assert response.status_code == 422
     assert mailer.sent == []
