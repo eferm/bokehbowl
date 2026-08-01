@@ -204,16 +204,11 @@ def test_unsubscribe_and_resubscribe(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = csrf_from(client.get("/account").text)
     response = client.post(
-        "/account/unsubscribe", data={"csrf": csrf}, follow_redirects=True
+        "/account/unsubscribe", data={"csrf": csrf}, follow_redirects=False
     )
-    assert "unsubscribed" in response.text
-
-    client.post("/login", data={"csrf": csrf, "email": "ada@example.com"})
-    client.post(
-        "/login/verify",
-        data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
-    )
+    assert response.headers["location"] == "/account"
     account = client.get("/account")
+    assert account.status_code == 200
     assert "Resubscribe" in account.text
     response = client.post(
         "/account/resubscribe", data={"csrf": csrf}, follow_redirects=True
@@ -231,7 +226,7 @@ def test_cookie_replay_rejected_after_logout(client, mailer):
     assert client.get("/account", follow_redirects=False).status_code == 303
 
 
-def test_cookie_replay_rejected_after_unsubscribe(client, mailer):
+def test_unsubscribe_keeps_the_current_session(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = csrf_from(client.get("/account").text)
     saved = dict(client.cookies)
@@ -240,7 +235,9 @@ def test_cookie_replay_rejected_after_unsubscribe(client, mailer):
     )
     assert unsubscribe.status_code == 303
     client.cookies = saved
-    assert client.get("/account", follow_redirects=False).status_code == 303
+    account = client.get("/account", follow_redirects=False)
+    assert account.status_code == 200
+    assert "Resubscribe" in account.text
 
 
 def test_logout_only_ends_current_device_session(client, mailer):
