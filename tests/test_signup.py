@@ -202,6 +202,20 @@ def test_account_fields_locked_until_edit(client, mailer):
     assert "Save" in editing
 
 
+def test_account_prompts_for_an_unsupported_saved_country(client, mailer):
+    sign_up_and_verify(client, mailer)
+    with Session(client.app.state.engine) as db:
+        db.execute(update(Address).values(country="Sverige"))
+        db.commit()
+
+    account = client.get("/account").text
+    assert (
+        '<option value="" selected disabled>Select a valid country</option>' in account
+    )
+    assert '<option value="Afghanistan" selected>' not in account
+    assert "Sverige" not in account
+
+
 def test_account_update(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = csrf_from(client.get("/account").text)

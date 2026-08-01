@@ -15,7 +15,7 @@
   <label class="form-label">Postal Code <input class="form-control" name="postal_code"{% if address %} value="{{ address.postal_code }}"{% endif %} required {{ autocomplete_attr("postal-code", autofill) }}></label>
   <label class="form-label">Country
     <select class="form-control" name="country" required {{ autocomplete_attr("country-name", autofill) }}>
-      <option value=""{% if not address %} selected{% endif %} disabled>Select a country</option>
+      <option value=""{% if not address or address.country not in countries %} selected{% endif %} disabled>{% if address and address.country not in countries %}Select a valid country{% else %}Select a country{% endif %}</option>
       {% for name in countries %}
       <option value="{{ name }}"{% if address and address.country == name %} selected{% endif %}>{{ name }}</option>
       {% endfor %}
