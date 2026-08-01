@@ -1,21 +1,40 @@
 {% extends "base.html" %}
+{% macro signup_payload(signup) %}
+    <input type="hidden" name="name" value="{{ signup.name }}">
+    <input type="hidden" name="address_line1" value="{{ signup.address_line1 }}">
+    <input type="hidden" name="address_line2" value="{{ signup.address_line2 or '' }}">
+    <input type="hidden" name="city" value="{{ signup.city }}">
+    <input type="hidden" name="region" value="{{ signup.region or '' }}">
+    <input type="hidden" name="postal_code" value="{{ signup.postal_code }}">
+    <input type="hidden" name="country" value="{{ signup.country }}">
+{%- endmacro %}
 {% block title %}Check your email - Bokehbowl{% endblock %}
 {% block content %}
 <div class="form-page">
   <h1>Check your email</h1>
-  <p>If <strong>{{ email }}</strong> has an account a 6-digit code is on its way.</p>
+  {% if code_outstanding %}
+  {% if signup %}
+  <p>A 6-digit code is on its way to <strong>{{ email }}</strong>.</p>
+  {% else %}
+  <p>If <strong>{{ email }}</strong> has an account, a 6-digit code is on its way.</p>
+  {% endif %}
+  {% endif %}
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
-  <form class="form-stack" method="post" action="/verify">
+  <form class="form-stack" method="post" action="{% if signup %}/signup/verify{% else %}/login/verify{% endif %}">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="email" value="{{ email }}">
+    {% if signup %}{{ signup_payload(signup) }}{% endif %}
     <label class="form-label">Code <input class="form-control" name="code" required inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" autofocus></label>
     <button type="submit">Verify</button>
   </form>
-  <form class="form-stack" method="post" action="/login">
+  <form class="form-stack" method="post" action="{% if signup %}/signup{% else %}/login{% endif %}">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="email" value="{{ email }}">
+    {% if signup %}{{ signup_payload(signup) }}{% endif %}
     <button type="submit">Resend code</button>
   </form>
+  {% if not signup %}
   <p>No code after a minute? <a href="/">Sign up</a> to create an account with this address.</p>
+  {% endif %}
 </div>
 {% endblock %}

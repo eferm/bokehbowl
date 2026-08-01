@@ -5,7 +5,7 @@ import secrets
 from datetime import datetime, timedelta
 
 from fastapi import BackgroundTasks, HTTPException, Request
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from bokehbowl.db import LoginCode, utcnow
@@ -13,10 +13,6 @@ from bokehbowl.mailer import Mailer
 
 
 CODE_TTL = timedelta(minutes=10)
-RESEND_COOLDOWN = timedelta(seconds=60)
-MAX_ATTEMPTS = 5
-HOURLY_CODE_CAP = 50
-DAILY_CODE_CAP = 300
 
 
 def hash_code(email: str, code: str) -> str:
@@ -30,28 +26,6 @@ def latest_code(db: Session, email: str) -> LoginCode | None:
         .order_by(LoginCode.created_at.desc())
         .limit(1)
     )
-
-
-def codes_issued_since(db: Session, cutoff: datetime) -> int:
-    return db.scalar(
-        select(func.count())
-        .select_from(LoginCode)
-        .where(LoginCode.created_at >= cutoff)
-    )
-
-
-def volume_capped(db: Session, now: datetime) -> bool:
-    """True when the instance-wide hourly or daily code volume cap is reached."""
-    if codes_issued_since(db, now - timedelta(hours=1)) >= HOURLY_CODE_CAP:
-        return True
-    return codes_issued_since(db, now - timedelta(days=1)) >= DAILY_CODE_CAP
-
-
-def cooldown_active(db: Session, email: str, now: datetime) -> bool:
-    """True when the latest unconsumed code for the email is younger than
-    RESEND_COOLDOWN."""
-    current = latest_code(db, email)
-    return current is not None and now - current.created_at < RESEND_COOLDOWN
 
 
 def issue_login_code(db: Session, email: str, now: datetime) -> str:
@@ -69,21 +43,9 @@ def issue_login_code(db: Session, email: str, now: datetime) -> str:
 
 
 def consume_login_code(db: Session, email: str, code: str, now: datetime) -> bool:
-    """Check a submitted code, atomically burning one attempt. Consumes the code
-    on success; returns True on a match within the attempt cap and TTL."""
+    """Consume and accept the latest unexpired code when its hash matches."""
     current = latest_code(db, email)
     if current is None or now > current.expires_at:
-        return False
-    claimed = db.execute(
-        update(LoginCode)
-        .where(
-            LoginCode.id == current.id,
-            LoginCode.consumed_at.is_(None),
-            LoginCode.attempts < MAX_ATTEMPTS,
-        )
-        .values(attempts=LoginCode.attempts + 1)
-    )
-    if claimed.rowcount != 1:
         return False
     if not secrets.compare_digest(current.code_hash, hash_code(email, code)):
         return False
@@ -118,11 +80,8 @@ async def require_csrf(request: Request) -> None:
 def send_login_code(
     db: Session, mailer: Mailer, email: str, background: BackgroundTasks
 ) -> None:
-    """Issue and commit a code, then enqueue the email, which is sent after the
-    response; silently sends nothing during cooldown or past the volume caps."""
+    """Issue and commit a code, then enqueue its email after the response."""
     now = utcnow()
-    if cooldown_active(db, email, now) or volume_capped(db, now):
-        return
     code = issue_login_code(db, email, now)
     db.commit()
     background.add_task(

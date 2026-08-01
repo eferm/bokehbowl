@@ -1,12 +1,13 @@
 import base64
 import json
 from datetime import timedelta
+from email.message import EmailMessage
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
-from bokehbowl import auth, web
+from bokehbowl import web
 from bokehbowl.config import load_config
 from bokehbowl.db import Address, LoginCode, User, UserSession, utcnow
 from tests.conftest import SIGNUP_FORM, csrf_from, sign_up_and_verify
@@ -27,8 +28,8 @@ def test_first_signup_shows_confirmation(client, mailer):
     csrf = csrf_from(client.get("/").text)
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
     response = client.post(
-        "/verify",
-        data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
+        "/signup/verify",
+        data={**SIGNUP_FORM, "csrf": csrf, "code": mailer.last_code()},
         follow_redirects=True,
     )
     assert "You're on the list." in response.text
@@ -37,6 +38,45 @@ def test_first_signup_shows_confirmation(client, mailer):
 def test_authenticated_header_offers_sign_out(client, mailer):
     sign_up_and_verify(client, mailer)
     assert "Sign out" in client.get("/").text
+
+
+def test_header_offers_sign_out_while_the_session_row_lives(client, mailer):
+    """The cookie outlives the row it names when the database is recreated, so
+    the header asks the database rather than the cookie."""
+    sign_up_and_verify(client, mailer)
+    with Session(client.app.state.engine) as db:
+        db.execute(delete(UserSession))
+        db.commit()
+
+    assert "Sign out" not in client.get("/").text
+    assert client.get("/account", follow_redirects=False).status_code == 303
+
+
+def test_header_offers_sign_out_while_the_session_is_young(client, mailer):
+    sign_up_and_verify(client, mailer)
+    with Session(client.app.state.engine) as db:
+        db.execute(
+            update(UserSession).values(
+                created_at=utcnow() - web.USER_SESSION_TTL - timedelta(days=1)
+            )
+        )
+        db.commit()
+
+    assert "Sign out" not in client.get("/").text
+    assert client.get("/account", follow_redirects=False).status_code == 303
+
+
+def test_a_page_needing_a_user_drops_a_dead_token(client, mailer):
+    """The browser stops carrying a token no session answers to."""
+    sign_up_and_verify(client, mailer)
+    with Session(client.app.state.engine) as db:
+        db.execute(delete(UserSession))
+        db.commit()
+
+    client.get("/account")
+    encoded = client.cookies["session"].split(".")[0]
+    payload = json.loads(base64.b64decode(encoded + "=" * (-len(encoded) % 4)))
+    assert "user_token" not in payload
 
 
 def test_session_cookie_carries_token(client, mailer):
@@ -76,10 +116,29 @@ def test_wrong_code_rejected(client, mailer):
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
     wrong = "000000" if mailer.last_code() != "000000" else "111111"
     response = client.post(
-        "/verify", data={"csrf": csrf, "email": "ada@example.com", "code": wrong}
+        "/signup/verify", data={**SIGNUP_FORM, "csrf": csrf, "code": wrong}
     )
     assert response.status_code == 422
     assert client.get("/account", follow_redirects=False).status_code == 303
+
+
+def test_wrong_codes_do_not_invalidate_the_correct_code(client, mailer):
+    csrf = csrf_from(client.get("/").text)
+    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
+    correct = mailer.last_code()
+    wrong = "000000" if correct != "000000" else "111111"
+    for _ in range(12):
+        response = client.post(
+            "/signup/verify", data={**SIGNUP_FORM, "csrf": csrf, "code": wrong}
+        )
+        assert response.status_code == 422
+
+    response = client.post(
+        "/signup/verify",
+        data={**SIGNUP_FORM, "csrf": csrf, "code": correct},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
 
 
 def test_account_fields_locked_until_edit(client, mailer):
@@ -123,7 +182,7 @@ def test_unsubscribe_and_resubscribe(client, mailer):
 
     client.post("/login", data={"csrf": csrf, "email": "ada@example.com"})
     client.post(
-        "/verify",
+        "/login/verify",
         data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
     )
     account = client.get("/account")
@@ -188,7 +247,7 @@ def test_verification_prunes_expired_user_sessions(client, mailer):
     csrf = csrf_from(client.get("/").text)
     client.post("/login", data={"csrf": csrf, "email": "ada@example.com"})
     client.post(
-        "/verify",
+        "/login/verify",
         data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
     )
 
@@ -205,8 +264,9 @@ def test_signup_state_survives_mailer_failure(client, mailer, monkeypatch):
     with pytest.raises(RuntimeError):
         client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
     with Session(client.app.state.engine) as db:
-        assert db.scalars(select(User)).one()
         assert db.scalars(select(LoginCode)).one()
+        assert db.scalars(select(User)).all() == []
+        assert db.scalars(select(Address)).all() == []
 
 
 def test_signup_rejects_address_lists(client, mailer):
@@ -227,7 +287,7 @@ def test_stale_cookie_cannot_log_out_new_session(client, mailer):
     client.post("/logout", data={"csrf": csrf})
     client.post("/login", data={"csrf": csrf, "email": "ada@example.com"})
     client.post(
-        "/verify",
+        "/login/verify",
         data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
     )
     fresh = dict(client.cookies)
@@ -254,94 +314,69 @@ def test_csrf_required_on_signup(client):
     assert response.status_code == 403
 
 
-def test_resend_is_rate_limited(client, mailer):
+def test_repeat_signup_sends_another_code(client, mailer):
     csrf = csrf_from(client.get("/").text)
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
-    client.post("/login", data={"csrf": csrf, "email": "ada@example.com"})
-    assert len(mailer.sent) == 1
-
-
-def test_code_volume_is_capped(client, mailer, monkeypatch):
-    monkeypatch.setattr(auth, "HOURLY_CODE_CAP", 2)
-    csrf = csrf_from(client.get("/").text)
-    responses = [
-        client.post(
-            "/signup",
-            data={**SIGNUP_FORM, "email": f"user{n}@example.com", "csrf": csrf},
-            follow_redirects=False,
-        )
-        for n in range(3)
-    ]
-    assert responses[2].status_code == 429
+    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
     assert len(mailer.sent) == 2
 
 
-def test_unverified_signup_data_is_overwritten(client, mailer):
+def test_repeat_signup_verifies_with_the_latest_payload(client, mailer):
     csrf = csrf_from(client.get("/").text)
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
+    revised = {
+        **SIGNUP_FORM,
+        "name": "Grace Hopper",
+        "address_line1": "1 Navy Yard",
+        "city": "Arlington",
+    }
+    client.post("/signup", data={**revised, "csrf": csrf})
+    with Session(client.app.state.engine) as db:
+        assert db.scalars(select(User)).all() == []
+        assert db.scalars(select(Address)).all() == []
     client.post(
-        "/signup",
-        data={
-            **SIGNUP_FORM,
-            "csrf": csrf,
-            "name": "Grace Hopper",
-            "address_line1": "1 Navy Yard",
-            "city": "Arlington",
-        },
+        "/signup/verify",
+        data={**revised, "csrf": csrf, "code": mailer.last_code()},
     )
     with Session(client.app.state.engine) as db:
         assert db.scalars(select(User)).one()
-        addresses = list(db.scalars(select(Address).order_by(Address.created_at)))
-        assert [a.addressee for a in addresses] == ["Ada Lovelace", "Grace Hopper"]
-        assert addresses[1].address_line1 == "1 Navy Yard"
-        assert addresses[1].city == "Arlington"
-    client.post(
-        "/verify",
-        data={"csrf": csrf, "email": "ada@example.com", "code": mailer.last_code()},
-    )
-    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf, "name": "Someone Else"})
-    with Session(client.app.state.engine) as db:
-        assert db.scalars(select(User)).one()
-        addresses = list(db.scalars(select(Address).order_by(Address.created_at)))
-        assert [a.addressee for a in addresses] == ["Ada Lovelace", "Grace Hopper"]
+        address = db.scalars(select(Address)).one()
+        assert address.addressee == "Grace Hopper"
+        assert address.address_line1 == "1 Navy Yard"
+        assert address.city == "Arlington"
 
 
-def test_unsubscribed_signup_still_records_address(client, mailer):
+def test_existing_user_signup_signs_in_and_keeps_the_saved_address(client, mailer):
+    sign_up_and_verify(client, mailer)
     csrf = csrf_from(client.get("/").text)
-    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
-    with Session(client.app.state.engine) as db:
-        user = db.scalars(select(User)).one()
-        user.unsubscribed_at = utcnow()
-        db.commit()
-    client.post(
-        "/signup",
-        data={
-            **SIGNUP_FORM,
-            "csrf": csrf,
-            "name": "Grace Hopper",
-            "address_line1": "1 Navy Yard",
-            "city": "Arlington",
-        },
-    )
-    with Session(client.app.state.engine) as db:
-        addresses = list(db.scalars(select(Address).order_by(Address.created_at)))
-        assert [a.addressee for a in addresses] == ["Ada Lovelace", "Grace Hopper"]
-
-
-def test_attempt_cap_blocks_correct_code(client, mailer):
-    csrf = csrf_from(client.get("/").text)
-    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
-    correct = mailer.last_code()
-    wrong = "000000" if correct != "000000" else "111111"
-    for _ in range(5):
-        response = client.post(
-            "/verify", data={"csrf": csrf, "email": "ada@example.com", "code": wrong}
-        )
-        assert response.status_code == 422
+    revised = {
+        **SIGNUP_FORM,
+        "name": "Someone Else",
+        "address_line1": "99 Other Road",
+    }
+    client.post("/signup", data={**revised, "csrf": csrf})
     response = client.post(
-        "/verify", data={"csrf": csrf, "email": "ada@example.com", "code": correct}
+        "/signup/verify",
+        data={**revised, "csrf": csrf, "code": mailer.last_code()},
+        follow_redirects=False,
     )
-    assert response.status_code == 422
+    assert response.headers["location"] == "/account?existing=1"
+
+    account = client.get("/account?existing=1")
+    assert "You already had an account" in account.text
+    assert "12 Analytical Way" in account.text
+    assert "99 Other Road" not in account.text
+
+    with Session(client.app.state.engine) as db:
+        assert db.scalars(select(User)).one()
+        address = db.scalars(select(Address)).one()
+        assert address.addressee == "Ada Lovelace"
+
+
+def test_signup_verify_page_reached_directly_starts_at_the_signup_form(client):
+    response = client.get("/signup/verify", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
 
 
 def test_consumed_code_cannot_be_replayed(client, mailer):
@@ -349,20 +384,72 @@ def test_consumed_code_cannot_be_replayed(client, mailer):
     code = mailer.last_code()
     csrf = csrf_from(client.get("/account").text)
     response = client.post(
-        "/verify", data={"csrf": csrf, "email": "ada@example.com", "code": code}
+        "/signup/verify", data={**SIGNUP_FORM, "csrf": csrf, "code": code}
     )
     assert response.status_code == 422
 
 
-def test_capped_signup_creates_no_row(client, mailer, monkeypatch):
-    monkeypatch.setattr(auth, "HOURLY_CODE_CAP", 1)
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("name", "Ada\x00 Lovelace"),
+        ("name", "Ada\x7f"),
+        ("city", "Lon\u200bdon"),
+    ],
+)
+def test_signup_rejects_a_field_with_a_control_character(client, mailer, field, value):
     csrf = csrf_from(client.get("/").text)
-    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
+    response = client.post("/signup", data={**SIGNUP_FORM, field: value, "csrf": csrf})
+    assert response.status_code == 422
+    assert mailer.sent == []
+
+
+def test_signup_folds_pasted_whitespace_into_single_spaces(client, mailer):
+    """A pasted address carries line breaks, tabs, and non-breaking spaces. Each
+    folds to a plain space, leaving one line for the row and for the header the
+    operator notification composes."""
+    form = {
+        **SIGNUP_FORM,
+        "name": "Ada\r\nBcc: eve@example.com",
+        "city": "Milton\xa0Keynes",
+        "postal_code": "N1\t9GU",
+        "address_line1": "12  Analytical  Way",
+    }
+    csrf = csrf_from(client.get("/").text)
+    client.post("/signup", data={**form, "csrf": csrf})
     response = client.post(
-        "/signup",
-        data={**SIGNUP_FORM, "email": "grace@example.com", "csrf": csrf},
+        "/signup/verify",
+        data={**form, "csrf": csrf, "code": mailer.last_code()},
         follow_redirects=False,
     )
-    assert response.status_code == 429
+    assert response.status_code == 303
+
     with Session(client.app.state.engine) as db:
-        assert len(db.scalars(select(User)).all()) == 1
+        address = db.scalars(select(Address)).one()
+        assert address.addressee == "Ada Bcc: eve@example.com"
+        assert address.city == "Milton Keynes"
+        assert address.postal_code == "N1 9GU"
+        assert address.address_line1 == "12 Analytical Way"
+    subject = mailer.sent[-1][1]
+    assert subject == "New signup: Ada Bcc: eve@example.com"
+    EmailMessage()["Subject"] = subject
+
+
+def test_signup_keeps_non_ascii_names_and_addresses(client, mailer):
+    form = {**SIGNUP_FORM, "name": "Åsa Öberg", "city": "Malmö", "country": "Sverige"}
+    csrf = csrf_from(client.get("/").text)
+    client.post("/signup", data={**form, "csrf": csrf})
+    response = client.post(
+        "/signup/verify",
+        data={**form, "csrf": csrf, "code": mailer.last_code()},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+    with Session(client.app.state.engine) as db:
+        address = db.scalars(select(Address)).one()
+        assert address.addressee == "Åsa Öberg"
+        assert address.city == "Malmö"
+    subject = mailer.sent[-1][1]
+    assert subject == "New signup: Åsa Öberg"
+    EmailMessage()["Subject"] = subject

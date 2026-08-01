@@ -3,7 +3,8 @@
 import csv
 import io
 import secrets
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -13,70 +14,45 @@ from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from bokehbowl.auth import require_csrf
 from bokehbowl.db import (
+    ADDRESS_FIELDS,
     Address,
     AdminSession,
     Base,
     Edition,
     Mailpiece,
+    NormalizedAddress,
     User,
     UserSession,
     latest_address,
+    latest_normalized_address,
+    record_normalized_address,
     utcnow,
 )
-from bokehbowl.web import Db, Templates
+from bokehbowl.web import AddressForm, Db, Templates
 
 
 class AdminRequired(Exception):
     """Raised when an admin page is hit without an admin session."""
 
 
+class NormalizeForm(AddressForm):
+    """A print-version submission, carrying the edition page to return to."""
+
+    edition: str = ""
+
+
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_csrf)])
 
-ADMIN_LOGIN_CAP = 10
-ADMIN_LOGIN_BACKSTOP = 100
-ADMIN_LOGIN_WINDOW = timedelta(minutes=15)
 ADMIN_SESSION_TTL = timedelta(days=14)
+
 
 TABLES: dict[str, tuple[type[Base], InstrumentedAttribute]] = {
     "users": (User, User.created_at),
     "addresses": (Address, Address.created_at),
+    "normalized_addresses": (NormalizedAddress, NormalizedAddress.created_at),
     "editions": (Edition, Edition.created_at),
     "mailpieces": (Mailpiece, Mailpiece.sent_at),
 }
-
-
-class LoginThrottle:
-    """Failed-login timestamps per client address, with a per-address cap and an
-    instance-wide backstop over a sliding window."""
-
-    def __init__(self) -> None:
-        self.failures: dict[str, list[datetime]] = {}
-
-    def prune(self, now: datetime) -> None:
-        """Drop attempts older than the window from every bucket, discarding
-        emptied ones."""
-        for address in list(self.failures):
-            self.failures[address] = [
-                failed_at
-                for failed_at in self.failures[address]
-                if failed_at > now - ADMIN_LOGIN_WINDOW
-            ]
-            if not self.failures[address]:
-                del self.failures[address]
-
-    def throttled(self, address: str, now: datetime) -> bool:
-        """True when the address's bucket is at its cap or the instance total is at
-        its backstop, after pruning to the window."""
-        self.prune(now)
-        total = sum(len(entries) for entries in self.failures.values())
-        return (
-            len(self.failures.get(address, [])) >= ADMIN_LOGIN_CAP
-            or total >= ADMIN_LOGIN_BACKSTOP
-        )
-
-    def record(self, address: str, now: datetime) -> None:
-        """Append a failed attempt for the address at the given time."""
-        self.failures.setdefault(address, []).append(now)
 
 
 def formula_safe(value: object) -> object:
@@ -134,9 +110,17 @@ def require_mailpiece(_: AdminOnly, db: Db, mailpiece_id: str) -> Mailpiece:
     return mailpiece
 
 
+def require_address(_: AdminOnly, db: Db, address_id: str) -> Address:
+    address = db.get(Address, address_id)
+    if address is None:
+        raise HTTPException(status_code=404)
+    return address
+
+
 UserById = Annotated[User, Depends(require_user)]
 EditionById = Annotated[Edition, Depends(require_edition)]
 MailpieceById = Annotated[Mailpiece, Depends(require_mailpiece)]
+AddressById = Annotated[Address, Depends(require_address)]
 
 
 def require_table(name: str) -> tuple[type[Base], InstrumentedAttribute]:
@@ -170,20 +154,8 @@ def login(
     password: Annotated[str, Form()],
 ):
     now = utcnow()
-    throttle = request.app.state.admin_login_throttle
-    address = request.client.host if request.client else ""
-    if throttle.throttled(address, now):
-        return templates.TemplateResponse(
-            request,
-            "admin_login.html",
-            {
-                "error": "Too many attempts. Try again later.",
-            },
-            status_code=429,
-        )
     expected = request.app.state.config.admin_password
     if not secrets.compare_digest(password, expected):
-        throttle.record(address, now)
         return templates.TemplateResponse(
             request,
             "admin_login.html",
@@ -259,12 +231,17 @@ def export(db: Db, _: AdminOnly, table: str = "users"):
     )
 
 
-def eligible_users(db: Session) -> list[User]:
-    """Everyone an edition may be sent to: verified and still subscribed."""
+def eligible_users(db: Session, edition: Edition) -> list[User]:
+    """Everyone the edition may be sent to: still subscribed, and signed up by
+    the time the edition was created. The one definition of who is on an
+    edition's list; the edition page and the send handler both ask it."""
     return list(
         db.scalars(
             select(User)
-            .where(User.verified_at.is_not(None), User.unsubscribed_at.is_(None))
+            .where(
+                User.unsubscribed_at.is_(None),
+                User.created_at <= edition.created_at,
+            )
             .order_by(User.created_at)
         )
     )
@@ -280,38 +257,57 @@ def mailpieces_of(db: Session, edition_id: str) -> list[Mailpiece]:
     )
 
 
-def unsent_users(db: Session, edition_id: str) -> list[tuple[User, Address]]:
-    """Eligible users the edition has not gone to yet, each paired with the
-    address an envelope to them would use."""
-    sent_ids = {mailpiece.user_id for mailpiece in mailpieces_of(db, edition_id)}
+@dataclass(frozen=True)
+class ReviewRecipient:
+    """A user whose current address awaits a print version."""
+
+    user: User
+    address: Address
+
+
+@dataclass(frozen=True)
+class ReadyRecipient:
+    """A user whose current address has a print version, which an envelope to
+    them prints."""
+
+    user: User
+    address: Address
+    normalized_address: NormalizedAddress
+
+
+Recipient = ReviewRecipient | ReadyRecipient
+"""An unsent recipient, in the kind their current address makes them."""
+
+
+def unsent_recipients(db: Session, edition: Edition) -> list[Recipient]:
+    """Eligible users the edition has not gone to yet, each as the kind their
+    current address makes them."""
+    sent_ids = {mailpiece.user_id for mailpiece in mailpieces_of(db, edition.id)}
+    recipients: list[Recipient] = []
+    for user in eligible_users(db, edition):
+        if user.id in sent_ids:
+            continue
+        address = latest_address(db, user.id)
+        normalized_address = latest_normalized_address(db, address)
+        recipients.append(
+            ReadyRecipient(user, address, normalized_address)
+            if normalized_address is not None
+            else ReviewRecipient(user, address)
+        )
+    return recipients
+
+
+def recipients_ready_to_send(recipients: list[Recipient]) -> list[ReadyRecipient]:
+    """Recipients whose current address has a print version."""
     return [
-        (user, address)
-        for user in eligible_users(db)
-        if user.id not in sent_ids
-        and (address := latest_address(db, user.id)) is not None
+        recipient for recipient in recipients if isinstance(recipient, ReadyRecipient)
     ]
 
 
-def pending(
-    edition: Edition, unsent: list[tuple[User, Address]]
-) -> list[tuple[User, Address]]:
-    """The default mailing list: unsent users who existed when the edition did."""
+def recipients_needing_review(recipients: list[Recipient]) -> list[ReviewRecipient]:
+    """Recipients whose current address awaits a print version."""
     return [
-        (user, address)
-        for user, address in unsent
-        if user.created_at <= edition.created_at
-    ]
-
-
-def late(
-    edition: Edition, unsent: list[tuple[User, Address]]
-) -> list[tuple[User, Address]]:
-    """Unsent users who signed up after the edition was created — sendable only
-    by explicit choice."""
-    return [
-        (user, address)
-        for user, address in unsent
-        if user.created_at > edition.created_at
+        recipient for recipient in recipients if isinstance(recipient, ReviewRecipient)
     ]
 
 
@@ -331,14 +327,14 @@ def create_edition(
 def edition_detail(
     request: Request, db: Db, templates: Templates, edition: EditionById
 ):
-    unsent = unsent_users(db, edition.id)
+    unsent = unsent_recipients(db, edition)
     return templates.TemplateResponse(
         request,
         "edition.html",
         {
             "edition": edition,
-            "pending": pending(edition, unsent),
-            "late": late(edition, unsent),
+            "to_send": recipients_ready_to_send(unsent),
+            "needs_review": recipients_needing_review(unsent),
             "mailpieces": mailpieces_of(db, edition.id),
         },
     )
@@ -349,24 +345,20 @@ def mark_sent(
     db: Db,
     edition: EditionById,
     user: UserById,
-    address_id: Annotated[str, Form()],
+    normalized_address_id: Annotated[str, Form()],
 ):
-    if user.verified_at is None or user.unsubscribed_at is not None:
+    if user.id not in {eligible.id for eligible in eligible_users(db, edition)}:
         raise HTTPException(status_code=409)
-    address = db.get(Address, address_id)
-    if address is None or address.user_id != user.id:
+    normalized = db.get(NormalizedAddress, normalized_address_id)
+    if normalized is None or normalized.address.user_id != user.id:
         raise HTTPException(status_code=404)
-    already_sent = db.scalar(
-        select(Mailpiece).where(
-            Mailpiece.edition_id == edition.id, Mailpiece.user_id == user.id
-        )
-    )
-    if already_sent is None:
+    sent_ids = {mailpiece.user_id for mailpiece in mailpieces_of(db, edition.id)}
+    if user.id not in sent_ids:
         db.add(
             Mailpiece(
                 edition_id=edition.id,
                 user_id=user.id,
-                address_id=address.id,
+                normalized_address_id=normalized.id,
                 sent_at=utcnow(),
             )
         )
@@ -374,7 +366,7 @@ def mark_sent(
 
 
 @router.post("/mailpieces/{mailpiece_id}/delete")
-def undo_mailpiece(db: Db, mailpiece: MailpieceById):
+def delete_mailpiece(db: Db, mailpiece: MailpieceById):
     edition_id = mailpiece.edition_id
     db.delete(mailpiece)
     return RedirectResponse(f"/admin/editions/{edition_id}", status_code=303)
@@ -382,17 +374,39 @@ def undo_mailpiece(db: Db, mailpiece: MailpieceById):
 
 @router.get("/editions/{edition_id}/labels.csv")
 def export_labels(db: Db, edition: EditionById):
-    columns = [
-        "addressee",
-        "address_line1",
-        "address_line2",
-        "city",
-        "region",
-        "postal_code",
-        "country",
-    ]
+    columns = list(ADDRESS_FIELDS)
     rows = [
-        [getattr(address, column) for column in columns]
-        for _, address in pending(edition, unsent_users(db, edition.id))
+        [getattr(recipient.normalized_address, column) for column in columns]
+        for recipient in recipients_ready_to_send(unsent_recipients(db, edition))
     ]
     return csv_response(f"edition-{edition.id}-to-send.csv", columns, rows)
+
+
+@router.get("/addresses/{address_id}/normalize")
+def normalize_form(
+    request: Request,
+    db: Db,
+    templates: Templates,
+    address: AddressById,
+    edition: str = "",
+):
+    return templates.TemplateResponse(
+        request,
+        "normalize.html",
+        {
+            "address": address,
+            "current": latest_normalized_address(db, address) or address,
+            "edition": edition,
+        },
+    )
+
+
+@router.post("/addresses/{address_id}/normalize")
+def normalize_address(
+    db: Db,
+    address: AddressById,
+    form: Annotated[NormalizeForm, Form()],
+):
+    record_normalized_address(db, address, form.components)
+    destination = f"/admin/editions/{form.edition}" if form.edition else "/admin"
+    return RedirectResponse(destination, status_code=303)

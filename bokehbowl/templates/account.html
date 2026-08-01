@@ -6,6 +6,8 @@
   <h1>Your account</h1>
   {% if created %}
   <p class="form-notice" role="status">You're on the list. Your address is saved, and I'll send you a photo when there is one.</p>
+  {% elif existing %}
+  <p class="form-notice" role="status">You already had an account, so I signed you in. The address I have for you is below — edit it any time.</p>
   {% elif saved %}
   <p class="form-notice" role="status">Saved.</p>
   {% endif %}

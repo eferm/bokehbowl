@@ -23,7 +23,7 @@
     <a class="site-brand" href="/">bokehbowl</a>
     <nav class="site-nav">
       <a href="/account">Account</a>
-      {% if request.session.get("user_token") %}
+      {% if signed_in %}
       <form class="header-signout" method="post" action="/logout">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <button type="submit">Sign out</button>

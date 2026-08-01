@@ -63,11 +63,10 @@ Uvicorn runs with `--proxy-headers` and takes the client IP and scheme from
 `X-Forwarded-*`. `FORWARDED_ALLOW_IPS` names the proxy hops trusted to set those
 headers (default: loopback); the compose file sets it to the Docker network
 ranges. On other hosting, set it to the address the platform's proxy connects
-from. The client IP feeds the per-IP throttle on admin login.
+from.
 
 For a Cloudflare proxy, use Full (strict) TLS with an origin certificate, or use
-a Cloudflare Tunnel. A rate-limiting rule for `POST /signup`, `POST /login`, and
-`POST /admin/login` adds edge protection for public instances.
+a Cloudflare Tunnel.
 
 ### Updates
 
@@ -83,26 +82,67 @@ Back up `data/`, `.env`, and `instance/` before updates.
 
 ## Usage Manual
 
+### Sign up and sign in
+
+The signup form and the sign-in form both send a 6-digit code, and the code
+is what creates the session. Signing up with an email that already has an
+account signs that account in, showing the address on file with a note that
+the account was already there; the account page is where addresses change.
+
 ### Create an edition
 
-At `/admin`, create an edition. The edition page lists eligible
-users and provides a CSV export for labels. Marking an item sent records the
-address used for that mailpiece. Users joining after the edition's creation
-appear separately and can be included deliberately.
+At `/admin`, create an edition. An edition goes to the subscribed users who
+signed up by the time it was created; later signups wait for the next one.
+The edition page splits them into two groups. Needs review lists addresses
+awaiting a print version: Approve
+files the address as entered, and Normalize opens a form to edit it first. To
+send lists users whose current address has a print version, with a CSV
+export for labels. Marking an item sent records the print version on the
+envelope; the account page keeps showing what the user entered.
+
+The list is computed on each view, and the two halves of it are read at
+different moments by design: the signup cutoff is fixed at the edition's
+creation, while subscription is read as it stands now. Someone who
+unsubscribes between an edition's creation and its send leaves that edition's
+list, and mailpieces already recorded stay. A subscription model that freezes
+the list at creation compares `unsubscribed_at` to the edition's `created_at`,
+or records the chosen users as rows when the edition is created.
 
 ### Data model
 
-- **users** — one row per person: their email identity and two lifecycle
-  timestamps. `verified_at` set means they proved the email;
-  `unsubscribed_at` set means they left. Editions go to users with
-  `verified_at` set and `unsubscribed_at` unset.
-- **addresses** — every postal address a user has had, append-only. A row
-  with `derived_from_id` set is a validated correction of the manual entry it
-  points at. Mail uses the newest manual entry, corrected by its newest
-  validation when one exists; the account page shows the manual entry.
+- **users** — one row per verified email identity. `created_at` is the
+  verification moment; `unsubscribed_at` set means mail stops. An edition
+  goes to users with `unsubscribed_at` unset whose `created_at` precedes the
+  edition's. A signup's address travels in the
+  form until verification creates the user and their first address in one
+  transaction.
+- **addresses** — every postal address a user entered, append-only; the
+  latest row is current and is what the account page shows.
+- **normalized_addresses** — operator-approved print versions, each pinned to
+  one address row, append-only. An envelope prints the latest normalized
+  version of its address; an address with one is ready to send.
 - **editions** — one print run (a postcard design, a photo, a letter).
 - **mailpieces** — one physical piece of mail: an edition sent to one user,
-  pinned to the exact address row written on the envelope.
+  pinned to the normalized row printed on the envelope.
+
+### Invariants
+
+Each invariant lives at a named enforcement layer:
+
+- One user per email — `UNIQUE` on `users.email`.
+- One mailpiece per user per edition — `UNIQUE(edition_id, user_id)` on
+  `mailpieces`.
+- Every user has an address — registration creates the user and their
+  first address in one transaction.
+- Every envelope prints an operator-approved form —
+  `mailpieces.normalized_address_id` is non-null, and the mark-sent handler
+  requires a normalized row belonging to the user before writing.
+- A normalized address prints only while its raw address is the user's
+  latest — each normalized row is pinned to one address row by `address_id`.
+- Login codes are single-use — consuming a code marks it as consumed.
+- Foreign keys hold at runtime, and deleting a user cascades down the
+  user-rooted chain — the engine factory turns `PRAGMA foreign_keys` on for
+  every connection.
 
 ## Development
 
@@ -110,7 +150,9 @@ appear separately and can be included deliberately.
 uv run pytest
 uv run ruff check .
 uv run ruff format .
+uv audit
 uv run alembic revision --autogenerate -m "..."
 ```
 
-Run the final command after changing the SQLAlchemy models.
+`uv audit` checks the locked dependencies against known advisories; run it when
+updating `uv.lock`. Run the final command after changing the SQLAlchemy models.
