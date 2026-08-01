@@ -473,6 +473,8 @@ def test_mark_sent_with_a_normalized_address_of_another_users_address_is_404(
 ):
     sign_up_and_verify(client, mailer)
     csrf = csrf_from(client.get("/").text)
+    client.post("/logout", data={"csrf": csrf})
+    csrf = csrf_from(client.get("/").text)
     grace = {**SIGNUP_FORM, "email": "grace@example.com", "name": "Grace Hopper"}
     client.post("/signup", data={**grace, "csrf": csrf})
     client.post(

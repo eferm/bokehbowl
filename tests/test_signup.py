@@ -31,6 +31,29 @@ def test_signed_in_header_shows_account(client, mailer):
     assert '<a href="/login">Log In</a>' not in page
 
 
+def test_signed_in_home_replaces_signup_with_account_link(client, mailer):
+    sign_up_and_verify(client, mailer)
+    page = client.get("/").text
+    assert "You’re already on the list" in page
+    assert '<a class="button-link" href="/account">View account</a>' in page
+    assert 'action="/signup"' not in page
+    assert "Join the list" not in page
+
+
+def test_signed_in_browser_cannot_start_another_signup(client, mailer):
+    sign_up_and_verify(client, mailer)
+    sent = len(mailer.sent)
+    csrf = csrf_from(client.get("/").text)
+    response = client.post(
+        "/signup",
+        data={**SIGNUP_FORM, "email": "grace@example.com", "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/account"
+    assert len(mailer.sent) == sent
+
+
 def test_country_dropdown_uses_cldr_names(client):
     page = client.get("/").text
     assert '<select class="form-control" name="country" required' in page
@@ -373,6 +396,8 @@ def test_repeat_signup_verifies_with_the_latest_payload(client, mailer):
 
 def test_existing_user_signup_signs_in_and_keeps_the_saved_address(client, mailer):
     sign_up_and_verify(client, mailer)
+    csrf = csrf_from(client.get("/").text)
+    client.post("/logout", data={"csrf": csrf})
     csrf = csrf_from(client.get("/").text)
     revised = {
         **SIGNUP_FORM,

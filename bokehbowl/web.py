@@ -193,6 +193,8 @@ def signup(
     background: BackgroundTasks,
     form: Annotated[SignupForm, Form()],
 ):
+    if live_session(db, request) is not None:
+        return RedirectResponse("/account", status_code=303)
     send_login_code(db, mailer, form.email, background)
     return templates.TemplateResponse(
         request,
