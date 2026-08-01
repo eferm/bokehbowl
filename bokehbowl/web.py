@@ -20,12 +20,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from bokehbowl.auth import (
-    client_address,
     consume_login_code,
     require_csrf,
     send_login_code,
-    spend_code_budget,
-    volume_capped,
 )
 from bokehbowl.db import (
     AddressComponents,
@@ -40,11 +37,6 @@ from bokehbowl.mailer import Mailer
 
 
 USER_SESSION_TTL = timedelta(days=30)
-
-CODE_REQUESTS_THROTTLED = (
-    "Too many code requests from here. Try again in a few minutes."
-)
-CODES_UNAVAILABLE = "Sign-in codes are temporarily unavailable. Try again in an hour."
 
 
 class LoginRequired(Exception):
@@ -188,29 +180,6 @@ def signup(
     background: BackgroundTasks,
     form: Annotated[SignupForm, Form()],
 ):
-    now = utcnow()
-    throttle = request.app.state.code_request_throttle
-    address = client_address(request)
-    if throttle.throttled(address, now):
-        return templates.TemplateResponse(
-            request,
-            "verify.html",
-            {
-                "email": form.email,
-                "error": CODE_REQUESTS_THROTTLED,
-                "signup": form,
-                "code_outstanding": False,
-            },
-            status_code=429,
-        )
-    if volume_capped(db, now):
-        return templates.TemplateResponse(
-            request,
-            "index.html",
-            {"error": CODES_UNAVAILABLE},
-            status_code=429,
-        )
-    spend_code_budget(db, throttle, address, form.email, now)
     send_login_code(db, mailer, form.email, background)
     return templates.TemplateResponse(
         request,
@@ -235,24 +204,6 @@ def login(
 ):
     """Emails a sign-in code to an address that has an account, then sends every
     caller to the code form."""
-    now = utcnow()
-    throttle = request.app.state.code_request_throttle
-    address = client_address(request)
-    if throttle.throttled(address, now):
-        return templates.TemplateResponse(
-            request,
-            "login.html",
-            {"error": CODE_REQUESTS_THROTTLED},
-            status_code=429,
-        )
-    if volume_capped(db, now):
-        return templates.TemplateResponse(
-            request,
-            "login.html",
-            {"error": CODES_UNAVAILABLE},
-            status_code=429,
-        )
-    spend_code_budget(db, throttle, address, form.email, now)
     existing = db.scalar(select(User).where(User.email == form.email))
     if existing is not None:
         send_login_code(db, mailer, form.email, background)
@@ -308,22 +259,7 @@ def signup_verify(
     form: Annotated[SignupVerifyForm, Form()],
 ):
     now = utcnow()
-    throttle = request.app.state.code_attempt_throttle
-    address = client_address(request)
-    if throttle.throttled(address, now):
-        return templates.TemplateResponse(
-            request,
-            "verify.html",
-            {
-                "email": form.email,
-                "error": "Too many attempts from here. Try again in a few minutes.",
-                "signup": form,
-                "code_outstanding": True,
-            },
-            status_code=429,
-        )
     if not consume_login_code(db, form.email, form.code, now):
-        throttle.record(address, now)
         return templates.TemplateResponse(
             request,
             "verify.html",
@@ -356,22 +292,7 @@ def login_verify(
     form: Annotated[VerifyForm, Form()],
 ):
     now = utcnow()
-    throttle = request.app.state.code_attempt_throttle
-    address = client_address(request)
-    if throttle.throttled(address, now):
-        return templates.TemplateResponse(
-            request,
-            "verify.html",
-            {
-                "email": form.email,
-                "error": "Too many attempts from here. Try again in a few minutes.",
-                "signup": None,
-                "code_outstanding": True,
-            },
-            status_code=429,
-        )
     if not consume_login_code(db, form.email, form.code, now):
-        throttle.record(address, now)
         return templates.TemplateResponse(
             request,
             "verify.html",

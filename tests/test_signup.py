@@ -4,11 +4,10 @@ from datetime import timedelta
 from email.message import EmailMessage
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
-from bokehbowl import auth, web
+from bokehbowl import web
 from bokehbowl.config import load_config
 from bokehbowl.db import Address, LoginCode, User, UserSession, utcnow
 from tests.conftest import SIGNUP_FORM, csrf_from, sign_up_and_verify
@@ -121,6 +120,25 @@ def test_wrong_code_rejected(client, mailer):
     )
     assert response.status_code == 422
     assert client.get("/account", follow_redirects=False).status_code == 303
+
+
+def test_wrong_codes_do_not_invalidate_the_correct_code(client, mailer):
+    csrf = csrf_from(client.get("/").text)
+    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
+    correct = mailer.last_code()
+    wrong = "000000" if correct != "000000" else "111111"
+    for _ in range(12):
+        response = client.post(
+            "/signup/verify", data={**SIGNUP_FORM, "csrf": csrf, "code": wrong}
+        )
+        assert response.status_code == 422
+
+    response = client.post(
+        "/signup/verify",
+        data={**SIGNUP_FORM, "csrf": csrf, "code": correct},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
 
 
 def test_account_fields_locked_until_edit(client, mailer):
@@ -296,25 +314,10 @@ def test_csrf_required_on_signup(client):
     assert response.status_code == 403
 
 
-def test_resend_is_rate_limited(client, mailer):
+def test_repeat_signup_sends_another_code(client, mailer):
     csrf = csrf_from(client.get("/").text)
     client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
-    client.post("/login", data={"csrf": csrf, "email": "ada@example.com"})
-    assert len(mailer.sent) == 1
-
-
-def test_code_volume_is_capped(client, mailer, monkeypatch):
-    monkeypatch.setattr(auth, "HOURLY_CODE_CAP", 2)
-    csrf = csrf_from(client.get("/").text)
-    responses = [
-        client.post(
-            "/signup",
-            data={**SIGNUP_FORM, "email": f"user{n}@example.com", "csrf": csrf},
-            follow_redirects=False,
-        )
-        for n in range(3)
-    ]
-    assert responses[2].status_code == 429
+    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
     assert len(mailer.sent) == 2
 
 
@@ -370,144 +373,10 @@ def test_existing_user_signup_signs_in_and_keeps_the_saved_address(client, maile
         assert address.addressee == "Ada Lovelace"
 
 
-def request_codes(app, address: str, count: int, prefix: str = "user") -> list[int]:
-    """Submit `count` signups from one client address, a fresh email each."""
-    with TestClient(app, base_url="https://testserver", client=(address, 999)) as guest:
-        csrf = csrf_from(guest.get("/").text)
-        return [
-            guest.post(
-                "/signup",
-                data={**SIGNUP_FORM, "email": f"{prefix}{n}@example.com", "csrf": csrf},
-            ).status_code
-            for n in range(count)
-        ]
-
-
-def test_code_requests_are_capped_per_address(client, mailer):
-    cap = client.app.state.code_request_throttle.cap
-    statuses = request_codes(client.app, "10.0.0.1", cap + 1)
-    assert statuses == [200] * cap + [429]
-    assert len(mailer.sent) == cap
-
-
-def test_resend_inside_the_cooldown_leaves_the_code_budget_alone(client, mailer):
-    """The budget counts codes, so mashing Resend during the cooldown spends
-    none of it."""
-    csrf = csrf_from(client.get("/").text)
-    cap = client.app.state.code_request_throttle.cap
-    statuses = [
-        client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf}).status_code
-        for _ in range(cap + 3)
-    ]
-
-    assert statuses == [200] * (cap + 3)
-    assert len(mailer.sent) == 1
-
-
-def test_a_throttled_signup_keeps_the_address_on_the_page(client, mailer):
-    cap = client.app.state.code_request_throttle.cap
-    request_codes(client.app, "10.0.0.5", cap, prefix="flood")
-    with TestClient(
-        client.app, base_url="https://testserver", client=("10.0.0.5", 999)
-    ) as guest:
-        csrf = csrf_from(guest.get("/").text)
-        response = guest.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
-
-    assert response.status_code == 429
-    assert "Too many code requests from here" in response.text
-    assert "12 Analytical Way" in response.text
-    assert "on its way" not in response.text
-
-
-def test_login_budget_spends_the_same_on_an_email_without_an_account(client, mailer):
-    """Codes for unknown emails cost what codes for known ones cost, so the cap
-    keeps quiet about who has an account."""
-    cap = client.app.state.code_request_throttle.cap
-    with TestClient(
-        client.app, base_url="https://testserver", client=("10.0.0.6", 999)
-    ) as guest:
-        csrf = csrf_from(guest.get("/").text)
-        statuses = [
-            guest.post(
-                "/login",
-                data={"csrf": csrf, "email": f"nobody{n}@example.com"},
-                follow_redirects=False,
-            ).status_code
-            for n in range(cap + 1)
-        ]
-
-    assert statuses == [303] * cap + [429]
-    assert mailer.sent == []
-
-
 def test_signup_verify_page_reached_directly_starts_at_the_signup_form(client):
     response = client.get("/signup/verify", follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"] == "/"
-
-
-def test_one_address_cannot_exhaust_the_code_budget(client, mailer):
-    cap = client.app.state.code_request_throttle.cap
-    request_codes(client.app, "10.0.0.1", cap, prefix="flood")
-    assert request_codes(client.app, "10.0.0.2", 1, prefix="grace") == [200]
-
-
-def burn_attempts(app, address: str, code: str, count: int) -> None:
-    """Submit a wrong code `count` times from one client address."""
-    with TestClient(app, base_url="https://testserver", client=(address, 999)) as guest:
-        csrf = csrf_from(guest.get("/").text)
-        for _ in range(count):
-            response = guest.post(
-                "/signup/verify", data={**SIGNUP_FORM, "csrf": csrf, "code": code}
-            )
-            assert response.status_code == 422
-
-
-def test_attempt_cap_blocks_correct_code(client, mailer):
-    csrf = csrf_from(client.get("/").text)
-    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
-    correct = mailer.last_code()
-    wrong = "000000" if correct != "000000" else "111111"
-
-    # Spread across addresses so the per-address throttle never fires and the
-    # code's own attempt cap is what runs out.
-    cap = client.app.state.code_attempt_throttle.cap
-    burn_attempts(client.app, "10.0.0.1", wrong, cap)
-    burn_attempts(client.app, "10.0.0.2", wrong, auth.MAX_ATTEMPTS - cap)
-
-    response = client.post(
-        "/signup/verify", data={**SIGNUP_FORM, "csrf": csrf, "code": correct}
-    )
-    assert response.status_code == 422
-
-
-def test_one_address_cannot_burn_a_code_to_death(client, mailer):
-    csrf = csrf_from(client.get("/").text)
-    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
-    correct = mailer.last_code()
-    wrong = "000000" if correct != "000000" else "111111"
-
-    burn_attempts(
-        client.app, "10.0.0.1", wrong, client.app.state.code_attempt_throttle.cap
-    )
-    with TestClient(
-        client.app, base_url="https://testserver", client=("10.0.0.1", 999)
-    ) as attacker:
-        attacker_csrf = csrf_from(attacker.get("/").text)
-        response = attacker.post(
-            "/signup/verify",
-            data={**SIGNUP_FORM, "csrf": attacker_csrf, "code": wrong},
-        )
-        assert response.status_code == 429
-        assert "Too many attempts" in response.text
-
-    # The code survives the burn, so its owner still signs in.
-    response = client.post(
-        "/signup/verify",
-        data={**SIGNUP_FORM, "csrf": csrf, "code": correct},
-        follow_redirects=False,
-    )
-    assert response.status_code == 303
 
 
 def test_consumed_code_cannot_be_replayed(client, mailer):
@@ -518,21 +387,6 @@ def test_consumed_code_cannot_be_replayed(client, mailer):
         "/signup/verify", data={**SIGNUP_FORM, "csrf": csrf, "code": code}
     )
     assert response.status_code == 422
-
-
-def test_capped_signup_creates_no_row(client, mailer, monkeypatch):
-    monkeypatch.setattr(auth, "HOURLY_CODE_CAP", 1)
-    csrf = csrf_from(client.get("/").text)
-    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
-    response = client.post(
-        "/signup",
-        data={**SIGNUP_FORM, "email": "grace@example.com", "csrf": csrf},
-        follow_redirects=False,
-    )
-    assert response.status_code == 429
-    with Session(client.app.state.engine) as db:
-        assert db.scalars(select(User)).all() == []
-        assert db.scalars(select(Address)).all() == []
 
 
 @pytest.mark.parametrize(

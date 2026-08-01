@@ -5,7 +5,7 @@ import secrets
 from datetime import datetime, timedelta
 
 from fastapi import BackgroundTasks, HTTPException, Request
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from bokehbowl.db import LoginCode, utcnow
@@ -13,67 +13,6 @@ from bokehbowl.mailer import Mailer
 
 
 CODE_TTL = timedelta(minutes=10)
-RESEND_COOLDOWN = timedelta(seconds=60)
-MAX_ATTEMPTS = 10
-HOURLY_CODE_CAP = 50
-DAILY_CODE_CAP = 300
-
-
-def client_address(request: Request) -> str:
-    """The client IP the proxy chain reports for this request."""
-    return request.client.host if request.client else ""
-
-
-class AddressThrottle:
-    """Event timestamps per client address, with a per-address cap and an
-    instance-wide backstop over a sliding window."""
-
-    def __init__(self, cap: int, backstop: int, window: timedelta) -> None:
-        self.cap = cap
-        self.backstop = backstop
-        self.window = window
-        self.events: dict[str, list[datetime]] = {}
-
-    def prune(self, now: datetime) -> None:
-        """Drop events older than the window from every bucket, discarding
-        emptied ones."""
-        for address in list(self.events):
-            self.events[address] = [
-                happened_at
-                for happened_at in self.events[address]
-                if happened_at > now - self.window
-            ]
-            if not self.events[address]:
-                del self.events[address]
-
-    def throttled(self, address: str, now: datetime) -> bool:
-        """True when the address's bucket is at its cap or the instance total is
-        at its backstop, after pruning to the window."""
-        self.prune(now)
-        total = sum(len(entries) for entries in self.events.values())
-        return len(self.events.get(address, [])) >= self.cap or total >= self.backstop
-
-    def record(self, address: str, now: datetime) -> None:
-        """Append an event for the address at the given time."""
-        self.events.setdefault(address, []).append(now)
-
-
-def code_attempt_throttle() -> AddressThrottle:
-    """A throttle for wrong login codes. Its cap is half of MAX_ATTEMPTS, so the
-    wrong codes one client address can submit leave every code attempts in
-    reserve for the address that asked for it."""
-    return AddressThrottle(
-        cap=MAX_ATTEMPTS // 2, backstop=500, window=timedelta(minutes=15)
-    )
-
-
-def code_request_throttle() -> AddressThrottle:
-    """A throttle for code requests. Four of its windows fit in an hour, so one
-    client address reaches two fifths of HOURLY_CODE_CAP and the rest of the
-    hourly budget stays open to other clients."""
-    return AddressThrottle(
-        cap=HOURLY_CODE_CAP // 10, backstop=200, window=timedelta(minutes=15)
-    )
 
 
 def hash_code(email: str, code: str) -> str:
@@ -87,43 +26,6 @@ def latest_code(db: Session, email: str) -> LoginCode | None:
         .order_by(LoginCode.created_at.desc())
         .limit(1)
     )
-
-
-def codes_issued_since(db: Session, cutoff: datetime) -> int:
-    return db.scalar(
-        select(func.count())
-        .select_from(LoginCode)
-        .where(LoginCode.created_at >= cutoff)
-    )
-
-
-def volume_capped(db: Session, now: datetime) -> bool:
-    """True when the instance-wide hourly or daily code volume cap is reached."""
-    if codes_issued_since(db, now - timedelta(hours=1)) >= HOURLY_CODE_CAP:
-        return True
-    return codes_issued_since(db, now - timedelta(days=1)) >= DAILY_CODE_CAP
-
-
-def cooldown_active(db: Session, email: str, now: datetime) -> bool:
-    """True when the latest unconsumed code for the email is younger than
-    RESEND_COOLDOWN."""
-    current = latest_code(db, email)
-    return current is not None and now - current.created_at < RESEND_COOLDOWN
-
-
-def spend_code_budget(
-    db: Session,
-    throttle: AddressThrottle,
-    address: str,
-    email: str,
-    now: datetime,
-) -> None:
-    """Charge the client address for a request that mints a code. A resend
-    inside the cooldown reuses the outstanding code and costs nothing. The
-    charge follows the code, so it lands the same whether or not the email has
-    an account."""
-    if not cooldown_active(db, email, now):
-        throttle.record(address, now)
 
 
 def issue_login_code(db: Session, email: str, now: datetime) -> str:
@@ -141,21 +43,9 @@ def issue_login_code(db: Session, email: str, now: datetime) -> str:
 
 
 def consume_login_code(db: Session, email: str, code: str, now: datetime) -> bool:
-    """Check a submitted code, atomically burning one attempt. Consumes the code
-    on success; returns True on a match within the attempt cap and TTL."""
+    """Consume and accept the latest unexpired code when its hash matches."""
     current = latest_code(db, email)
     if current is None or now > current.expires_at:
-        return False
-    claimed = db.execute(
-        update(LoginCode)
-        .where(
-            LoginCode.id == current.id,
-            LoginCode.consumed_at.is_(None),
-            LoginCode.attempts < MAX_ATTEMPTS,
-        )
-        .values(attempts=LoginCode.attempts + 1)
-    )
-    if claimed.rowcount != 1:
         return False
     if not secrets.compare_digest(current.code_hash, hash_code(email, code)):
         return False
@@ -190,11 +80,8 @@ async def require_csrf(request: Request) -> None:
 def send_login_code(
     db: Session, mailer: Mailer, email: str, background: BackgroundTasks
 ) -> None:
-    """Issue and commit a code, then enqueue the email, which is sent after the
-    response; silently sends nothing during cooldown or past the volume caps."""
+    """Issue and commit a code, then enqueue its email after the response."""
     now = utcnow()
-    if cooldown_active(db, email, now) or volume_capped(db, now):
-        return
     code = issue_login_code(db, email, now)
     db.commit()
     background.add_task(

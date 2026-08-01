@@ -222,7 +222,7 @@ def _read_old_rows(bind) -> dict[str, list[dict]]:
             "id": u.id,
             "email": u.email,
             "unsubscribed_at": u.unsubscribed_at,
-            "created_at": u.created_at,
+            "created_at": u.verified_at,
         }
         for u in old_users
         if u.id not in unverified_ids

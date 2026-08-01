@@ -2,7 +2,6 @@ import re
 from typing import get_args, get_type_hints
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -14,7 +13,6 @@ from bokehbowl.db import (
     Mailpiece,
     NormalizedAddress,
     User,
-    utcnow,
 )
 from tests.conftest import ADMIN_PASSWORD, SIGNUP_FORM, csrf_from, sign_up_and_verify
 
@@ -122,53 +120,6 @@ def test_wrong_password_rejected(client):
     csrf = csrf_from(client.get("/admin/login").text)
     response = client.post("/admin/login", data={"csrf": csrf, "password": "nope"})
     assert response.status_code == 401
-
-
-def test_login_throttled_after_repeated_failures(client):
-    csrf = csrf_from(client.get("/admin/login").text)
-    for _ in range(10):
-        response = client.post("/admin/login", data={"csrf": csrf, "password": "nope"})
-        assert response.status_code == 401
-    response = client.post(
-        "/admin/login", data={"csrf": csrf, "password": ADMIN_PASSWORD}
-    )
-    assert response.status_code == 429
-    assert "Too many attempts" in response.text
-
-
-def test_throttle_is_per_client_address(client):
-    csrf = csrf_from(client.get("/admin/login").text)
-    for _ in range(10):
-        response = client.post("/admin/login", data={"csrf": csrf, "password": "nope"})
-        assert response.status_code == 401
-    response = client.post(
-        "/admin/login", data={"csrf": csrf, "password": ADMIN_PASSWORD}
-    )
-    assert response.status_code == 429
-
-    with TestClient(
-        client.app, base_url="https://testserver", client=("10.9.8.7", 999)
-    ) as other:
-        other_csrf = csrf_from(other.get("/admin/login").text)
-        response = other.post(
-            "/admin/login",
-            data={"csrf": other_csrf, "password": ADMIN_PASSWORD},
-            follow_redirects=False,
-        )
-        assert response.status_code == 303
-
-
-def test_backstop_throttles_across_addresses(client):
-    now = utcnow()
-    client.app.state.admin_login_throttle.events = {
-        str(index): [now] for index in range(100)
-    }
-    csrf = csrf_from(client.get("/admin/login").text)
-    response = client.post(
-        "/admin/login", data={"csrf": csrf, "password": ADMIN_PASSWORD}
-    )
-    assert response.status_code == 429
-    assert "Too many attempts" in response.text
 
 
 def test_users_table_shows_db_columns(client, mailer):

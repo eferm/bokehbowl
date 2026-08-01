@@ -57,24 +57,16 @@ docker compose up -d --build
 Compose binds the app to `127.0.0.1:8000`. Put an HTTPS reverse proxy or
 Cloudflare Tunnel in front of it. The container applies Alembic migrations at
 startup. SQLite data lives in `./data/`; copy that directory as part of your
-backup routine. The container runs as uid 10001, which needs write access to
-`./data/`.
+backup routine.
 
 Uvicorn runs with `--proxy-headers` and takes the client IP and scheme from
 `X-Forwarded-*`. `FORWARDED_ALLOW_IPS` names the proxy hops trusted to set those
 headers (default: loopback); the compose file sets it to the Docker network
 ranges. On other hosting, set it to the address the platform's proxy connects
-from. The client IP feeds the per-address throttles on admin login, code
-requests, and code submissions.
-
-Those throttles count in memory, in the process that serves the request, so
-each cap holds per worker. The container runs one uvicorn worker; a deployment
-that adds workers multiplies the caps by the worker count.
+from.
 
 For a Cloudflare proxy, use Full (strict) TLS with an origin certificate, or use
-a Cloudflare Tunnel. A rate-limiting rule for `POST /signup`, `POST /login`,
-`POST /signup/verify`, `POST /login/verify`, and `POST /admin/login` adds edge
-protection for public instances.
+a Cloudflare Tunnel.
 
 ### Updates
 
@@ -147,13 +139,7 @@ Each invariant lives at a named enforcement layer:
   requires a normalized row belonging to the user before writing.
 - A normalized address prints only while its raw address is the user's
   latest — each normalized row is pinned to one address row by `address_id`.
-- Login codes are single-use — consuming a code deletes it.
-- A login code keeps attempts in reserve for the address that asked for it —
-  the per-client-address cap on the verify routes is lower than the per-code
-  attempt cap, and a throttled request is refused before an attempt is spent.
-- Every client address reaches part of the hourly code budget — the per-address
-  cap on `POST /signup` and `POST /login` admits four windows an hour,
-  totalling two fifths of `HOURLY_CODE_CAP`.
+- Login codes are single-use — consuming a code marks it as consumed.
 - Foreign keys hold at runtime, and deleting a user cascades down the
   user-rooted chain — the engine factory turns `PRAGMA foreign_keys` on for
   every connection.

@@ -12,7 +12,7 @@ from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
-from bokehbowl.auth import AddressThrottle, client_address, require_csrf
+from bokehbowl.auth import require_csrf
 from bokehbowl.db import (
     ADDRESS_FIELDS,
     Address,
@@ -44,11 +44,6 @@ class NormalizeForm(AddressForm):
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_csrf)])
 
 ADMIN_SESSION_TTL = timedelta(days=14)
-
-
-def admin_login_throttle() -> AddressThrottle:
-    """A throttle for wrong admin passwords."""
-    return AddressThrottle(cap=10, backstop=100, window=timedelta(minutes=15))
 
 
 TABLES: dict[str, tuple[type[Base], InstrumentedAttribute]] = {
@@ -159,20 +154,8 @@ def login(
     password: Annotated[str, Form()],
 ):
     now = utcnow()
-    throttle = request.app.state.admin_login_throttle
-    address = client_address(request)
-    if throttle.throttled(address, now):
-        return templates.TemplateResponse(
-            request,
-            "admin_login.html",
-            {
-                "error": "Too many attempts. Try again later.",
-            },
-            status_code=429,
-        )
     expected = request.app.state.config.admin_password
     if not secrets.compare_digest(password, expected):
-        throttle.record(address, now)
         return templates.TemplateResponse(
             request,
             "admin_login.html",
