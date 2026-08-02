@@ -214,7 +214,7 @@ def current_address(db: Session, user: User) -> Address:
     ).one()
 
 
-def latest_normalization_for_address(
+def latest_normalized_address(
     db: Session, address: Address
 ) -> NormalizedAddress | None:
     """The address's current print version, once the operator has filed one.
@@ -225,13 +225,6 @@ def latest_normalization_for_address(
         .order_by(NormalizedAddress.created_at.desc(), NormalizedAddress.id.desc())
         .limit(1)
     ).first()
-
-
-def current_normalized_address(
-    db: Session, user: User
-) -> NormalizedAddress | None:
-    """The current print version of the user's latest address, once filed."""
-    return latest_normalization_for_address(db, current_address(db, user))
 
 
 def record_address(db: Session, user: User, submitted: AddressComponents) -> None:
@@ -246,7 +239,7 @@ def record_normalized_address(
 ) -> None:
     """Append a print version of the address unless its latest print version is
     identical."""
-    current = latest_normalization_for_address(db, address)
+    current = latest_normalized_address(db, address)
     if current is not None and submitted == current.components:
         return
     db.add(NormalizedAddress(address_id=address.id, **asdict(submitted)))

@@ -25,8 +25,7 @@ from bokehbowl.db import (
     User,
     UserSession,
     current_address,
-    current_normalized_address,
-    latest_normalization_for_address,
+    latest_normalized_address,
     record_normalized_address,
     utcnow,
 )
@@ -56,14 +55,36 @@ TABLES: dict[str, tuple[type[Base], InstrumentedAttribute[datetime]]] = {
     "mailpieces": (Mailpiece, Mailpiece.sent_at),
 }
 
-type SyntheticColumn = tuple[str, Callable[..., object]]
+type SyntheticColumn = tuple[str, Callable[[Session, list[Base]], list[object]]]
+
+
+def current_addresses(db: Session, rows: list[Base]) -> list[object]:
+    return [current_address(db, row) for row in rows]
+
+
+def current_normalized_addresses(db: Session, rows: list[Base]) -> list[object]:
+    return [
+        latest_normalized_address(db, current_address(db, row)) for row in rows
+    ]
+
+
+def sent_mailpiece_counts(db: Session, rows: list[Base]) -> list[object]:
+    counts = dict(
+        db.execute(
+            select(Mailpiece.edition_id, func.count())
+            .where(Mailpiece.edition_id.in_(row.id for row in rows))
+            .group_by(Mailpiece.edition_id)
+        ).all()
+    )
+    return [counts.get(row.id, 0) for row in rows]
 
 
 SYNTHETIC_COLUMNS: dict[type[Base], tuple[SyntheticColumn, ...]] = {
     User: (
-        ("current_address", current_address),
-        ("current_normalized_address", current_normalized_address),
-    )
+        ("current_address", current_addresses),
+        ("current_normalized_address", current_normalized_addresses),
+    ),
+    Edition: (("sent_mailpieces", sent_mailpiece_counts),),
 }
 
 
@@ -159,15 +180,16 @@ def table_data(
 ) -> tuple[list[str], list[list[object]]]:
     """Stored columns and rows, followed by any synthetic columns and values."""
     columns = [column.key for column in model.__table__.columns]
-    rows = db.scalars(select(model).order_by(timestamp.desc()))
+    records = list(db.scalars(select(model).order_by(timestamp.desc())))
+    synthetic_values = [values(db, records) for _, values in synthetic]
     return (
         [*columns, *(name for name, _ in synthetic)],
         [
             [
                 *(getattr(row, column) for column in columns),
-                *[value_of(db, row) for _, value_of in synthetic],
+                *(values[index] for values in synthetic_values),
             ]
-            for row in rows
+            for index, row in enumerate(records)
         ],
     )
 
@@ -249,6 +271,15 @@ def dashboard(
     )
 
 
+@router.get("/users/{user_id}/unsubscribe")
+def confirm_unsubscribe(request: Request, templates: Templates, user: UserById):
+    return templates.TemplateResponse(
+        request,
+        "unsubscribe_user.html",
+        {"user": user},
+    )
+
+
 @router.post("/users/{user_id}/unsubscribe")
 def unsubscribe(db: Db, user: UserById):
     if user.unsubscribed_at is None:
@@ -327,7 +358,7 @@ def unsent_recipients(db: Session, edition: Edition) -> list[Recipient]:
         if user.id in sent_ids:
             continue
         address = current_address(db, user)
-        normalized_address = current_normalized_address(db, user)
+        normalized_address = latest_normalized_address(db, address)
         recipients.append(
             ReadyRecipient(user, address, normalized_address)
             if normalized_address is not None
@@ -360,6 +391,17 @@ def create_edition(
     db.add(edition)
     db.flush()
     return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)
+
+
+@router.get("/editions/{edition_id}/delete")
+def confirm_delete_edition(
+    request: Request, templates: Templates, edition: EditionById
+):
+    return templates.TemplateResponse(
+        request,
+        "delete_edition.html",
+        {"edition": edition},
+    )
 
 
 @router.post("/editions/{edition_id}/delete")
@@ -440,7 +482,7 @@ def normalize_form(
         "normalize.html",
         {
             "address": address,
-            "current": latest_normalization_for_address(db, address) or address,
+            "current": latest_normalized_address(db, address) or address,
             "edition": edition,
         },
     )

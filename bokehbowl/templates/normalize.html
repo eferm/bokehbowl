@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components/address.html" import address_lines %}
 {% from "components/form.html" import mailing_address_fields %}
 {% block title %}Normalize address - Bokehbowl{% endblock %}
 {% block body_class %}admin{% endblock %}
@@ -6,12 +7,7 @@
 <p><a href="{% if edition %}/admin/editions/{{ edition }}{% else %}/admin{% endif %}">&larr; back</a></p>
 <h1>Normalize address</h1>
 <p>The user entered:</p>
-<p>
-  {{ address.addressee }}<br>
-  {{ address.address_line1 }}{% if address.address_line2 %}<br>{{ address.address_line2 }}{% endif %}<br>
-  {{ address.city }}{% if address.region %}, {{ address.region }}{% endif %} {{ address.postal_code }}<br>
-  {{ address.country }}
-</p>
+<p>{{ address_lines(address, true) }}</p>
 <form class="form-stack" method="post" action="/admin/addresses/{{ address.id }}/normalize">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <input type="hidden" name="edition" value="{{ edition }}">
