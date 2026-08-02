@@ -30,10 +30,7 @@
 <p><a href="/admin?table=editions">&larr; all editions</a></p>
 <h1>{{ edition.title }}</h1>
 <p>Created {{ edition.created_at.date() }}.</p>
-<form method="post" action="/admin/editions/{{ edition.id }}/delete">
-  <input type="hidden" name="csrf" value="{{ csrf }}">
-  <button type="submit">Delete edition</button>
-</form>
+<p><a class="button-link" href="/admin/editions/{{ edition.id }}/delete">Delete edition</a></p>
 
 {% if needs_review %}
 <h2>Needs review ({{ needs_review | length }})</h2>
@@ -62,7 +59,7 @@
 <div class="table-scroll">
 <table>
   <thead>
-    <tr><th>Name</th><th>Address</th><th>Email</th><th></th><th></th></tr>
+    <tr><th>Name</th><th>Normalized address</th><th>Email</th><th></th><th></th></tr>
   </thead>
   <tbody>
     {% for recipient in to_send %}
@@ -92,11 +89,7 @@
     <tr>
       <td>{{ printed.addressee }}</td>
       <td>{{ s.sent_at.date() }}</td>
-      <td>
-        {{ printed.address_line1 }},
-        {{ printed.city }} {{ printed.postal_code }},
-        {{ printed.country }}
-      </td>
+      <td>{{ address_lines(printed) }}</td>
       <td>
         <form method="post" action="/admin/mailpieces/{{ s.id }}/delete">
           <input type="hidden" name="csrf" value="{{ csrf }}">

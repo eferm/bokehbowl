@@ -193,10 +193,36 @@ def test_editions_table_renders_empty(client, mailer):
     assert "Nothing here yet." in page.text
 
 
+def test_editions_table_shows_sent_mailpiece_count(client, mailer):
+    sign_up_and_verify(client, mailer)
+    csrf = admin_login(client)
+    normalize_current_address(client, csrf)
+    detail_url = create_edition(client, csrf)
+    detail = client.get(detail_url).text
+    client.post(
+        f"{detail_url}/send/{sole_user_id(client)}",
+        data={
+            "csrf": csrf,
+            "normalized_address_id": normalized_address_id_from(detail),
+        },
+    )
+
+    table = client.get("/admin?table=editions").text
+    assert "<th>sent_mailpieces</th>" in table
+    assert re.search(r"<td>1</td>\s*<td>", table)
+
+
 def test_deleting_an_edition_archives_it(client, mailer):
     csrf = admin_login(client)
     detail_url = create_edition(client, csrf, title="temporary edition")
     edition_id = detail_url.rsplit("/", maxsplit=1)[-1]
+
+    confirmation = client.get(f"{detail_url}/delete").text
+    assert "Delete “temporary edition”?" in confirmation
+    assert f'action="{detail_url}/delete"' in confirmation
+    assert "Confirm delete" in confirmation
+    with Session(client.app.state.engine) as db:
+        assert db.get(Edition, edition_id).deleted_at is None
 
     response = client.post(
         f"{detail_url}/delete", data={"csrf": csrf}, follow_redirects=False
@@ -234,6 +260,18 @@ def test_admin_unsubscribe_is_soft_and_idempotent(client, mailer):
     client.post(f"/admin/users/{user_id}/unsubscribe", data={"csrf": csrf})
     with Session(client.app.state.engine) as db:
         assert db.scalar(select(User.unsubscribed_at)) == first
+
+
+def test_admin_unsubscribe_requires_confirmation(client, mailer):
+    sign_up_and_verify(client, mailer)
+    admin_login(client)
+    user_id = sole_user_id(client)
+
+    confirmation = client.get(f"/admin/users/{user_id}/unsubscribe").text
+    assert "Unsubscribe ada@example.com?" in confirmation
+    assert "Confirm unsubscribe" in confirmation
+    with Session(client.app.state.engine) as db:
+        assert db.get(User, user_id).unsubscribed_at is None
 
 
 def test_admin_resubscribe(client, mailer):
@@ -339,6 +377,39 @@ def test_mailpiece_pins_current_address(client, mailer):
     with Session(client.app.state.engine) as db:
         mailpiece = db.scalars(select(Mailpiece)).one()
         assert mailpiece.normalized_address.address_line1 == "1 Ockham Park"
+
+
+def test_sent_mailpiece_uses_complete_formatted_address(client, mailer):
+    sign_up_and_verify(client, mailer)
+    csrf = admin_login(client)
+    normalize_current_address(
+        client,
+        csrf,
+        address_line2="Apartment 2B",
+        region="Greater London",
+    )
+    detail_url = create_edition(client, csrf)
+    detail = client.get(detail_url).text
+    client.post(
+        f"{detail_url}/send/{sole_user_id(client)}",
+        data={
+            "csrf": csrf,
+            "normalized_address_id": normalized_address_id_from(detail),
+        },
+    )
+
+    sent = client.get(detail_url).text
+    assert "12 Analytical Way<br>Apartment 2B<br>" in sent
+    assert "London, Greater London N1 9GU<br>" in sent
+
+
+def test_to_send_labels_its_address_as_normalized(client, mailer):
+    sign_up_and_verify(client, mailer)
+    csrf = admin_login(client)
+    normalize_current_address(client, csrf)
+
+    detail = client.get(create_edition(client, csrf)).text
+    assert "<th>Normalized address</th>" in detail
 
 
 def test_unsubscribed_excluded_from_edition_list(client, mailer):
