@@ -105,6 +105,8 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        if request.url.path == "/admin" or request.url.path.startswith("/admin/"):
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.exception_handler(LoginRequired)

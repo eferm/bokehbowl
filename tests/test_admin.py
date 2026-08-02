@@ -107,6 +107,7 @@ def test_dashboard_requires_login(client):
     response = client.get("/admin", follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/login"
+    assert response.headers["cache-control"] == "no-store"
 
 
 def test_admin_cookie_replay_rejected_after_logout(client):
