@@ -77,18 +77,15 @@ def normalize_current_address(client, csrf, **overrides) -> None:
 
 def submit_normalize_form_as_prefilled(client, address_id: str) -> None:
     """Save the admin normalize form back exactly as the page served it."""
-    page = client.get(f"/admin/addresses/{address_id}/normalize").text
+    path = f"/admin/addresses/{address_id}/normalize"
+    page = client.get(path).text
     start = page.index('<form class="form-stack"')
     form = page[start : page.index("</form>", start)]
     fields = dict(re.findall(r'name="([^"]+)"(?: value="([^"]*)")?', form))
     fields["country"] = re.search(
         r'<option value="([^"]+)" selected>', form
     ).group(1)
-    response = client.post(
-        f"/admin/addresses/{address_id}/normalize",
-        data=fields,
-        follow_redirects=False,
-    )
+    response = client.post(path, data=fields, follow_redirects=False)
     assert response.status_code == 303
 
 
@@ -137,6 +134,25 @@ def test_users_table_shows_db_columns(client, mailer):
         assert f"<th>{column}</th>" in page.text
 
 
+def test_users_table_shows_current_address_and_its_normalized_address(
+    client, mailer
+):
+    sign_up_and_verify(client, mailer)
+    csrf = admin_login(client)
+    normalize_current_address(client, csrf, address_line1="12 Analytical Way, Flat 3")
+    update_account(client, OCKHAM_PARK)
+
+    page = client.get("/admin?table=users").text
+    assert "<th>current_address</th>" in page
+    assert "<th>current_normalized_address</th>" in page
+    assert "1 Ockham Park" in page
+    assert "Flat 3" not in page
+
+    normalize_current_address(client, csrf, address_line1="1 Ockham Park, Flat 4")
+    page = client.get("/admin?table=users").text
+    assert "1 Ockham Park, Flat 4" in page
+
+
 def test_unknown_table_is_404(client, mailer):
     admin_login(client)
     assert client.get("/admin?table=login_codes").status_code == 404
@@ -173,6 +189,7 @@ def test_editions_table_renders_empty(client, mailer):
     admin_login(client)
     page = client.get("/admin?table=editions")
     assert "<th>title</th>" in page.text
+    assert "current_address" not in page.text
     assert "Nothing here yet." in page.text
 
 
@@ -586,9 +603,10 @@ def test_saving_the_normalize_form_untouched_appends_no_print_version(client, ma
 
 def test_normalize_route_unknown_address_is_404(client, mailer):
     csrf = admin_login(client)
-    assert client.get("/admin/addresses/nope/normalize").status_code == 404
+    path = "/admin/addresses/nope/normalize"
+    assert client.get(path).status_code == 404
     response = client.post(
-        "/admin/addresses/nope/normalize",
+        path,
         data={"csrf": csrf, **{field: "x" for field in OCKHAM_PARK}},
     )
     assert response.status_code == 404

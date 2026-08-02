@@ -30,7 +30,7 @@ from bokehbowl.db import (
     AddressComponents,
     User,
     UserSession,
-    latest_address,
+    current_address,
     record_address,
     register_user,
     utcnow,
@@ -353,7 +353,7 @@ def account(request: Request, db: Db, templates: Templates, user: CurrentUser):
         "account.html",
         {
             "user": user,
-            "address": latest_address(db, user.id),
+            "address": current_address(db, user),
             "created": request.query_params.get("created") == "1",
             "existing": request.query_params.get("existing") == "1",
             "saved": "saved" in request.query_params,
@@ -369,7 +369,7 @@ def update_account(
     user: CurrentUser,
     form: Annotated[AddressForm, Form()],
 ):
-    record_address(db, user.id, form.components)
+    record_address(db, user, form.components)
     return RedirectResponse("/account?saved=1", status_code=303)
 
 

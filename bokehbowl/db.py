@@ -203,18 +203,18 @@ class AdminSession(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
-def latest_address(db: Session, user_id: str) -> Address:
+def current_address(db: Session, user: User) -> Address:
     """The user's latest address, created_at ties broken on id. Every user has
     one: registration records it."""
     return db.scalars(
         select(Address)
-        .where(Address.user_id == user_id)
+        .where(Address.user_id == user.id)
         .order_by(Address.created_at.desc(), Address.id.desc())
         .limit(1)
     ).one()
 
 
-def latest_normalized_address(
+def latest_normalization_for_address(
     db: Session, address: Address
 ) -> NormalizedAddress | None:
     """The address's current print version, once the operator has filed one.
@@ -227,11 +227,18 @@ def latest_normalized_address(
     ).first()
 
 
-def record_address(db: Session, user_id: str, submitted: AddressComponents) -> None:
+def current_normalized_address(
+    db: Session, user: User
+) -> NormalizedAddress | None:
+    """The current print version of the user's latest address, once filed."""
+    return latest_normalization_for_address(db, current_address(db, user))
+
+
+def record_address(db: Session, user: User, submitted: AddressComponents) -> None:
     """Append an address unless the user's latest address is identical."""
-    if submitted == latest_address(db, user_id).components:
+    if submitted == current_address(db, user).components:
         return
-    db.add(Address(user_id=user_id, **asdict(submitted)))
+    db.add(Address(user_id=user.id, **asdict(submitted)))
 
 
 def record_normalized_address(
@@ -239,7 +246,7 @@ def record_normalized_address(
 ) -> None:
     """Append a print version of the address unless its latest print version is
     identical."""
-    current = latest_normalized_address(db, address)
+    current = latest_normalization_for_address(db, address)
     if current is not None and submitted == current.components:
         return
     db.add(NormalizedAddress(address_id=address.id, **asdict(submitted)))

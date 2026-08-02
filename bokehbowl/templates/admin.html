@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components/address.html" import address_lines %}
 {% block title %}Admin - Bokehbowl{% endblock %}
 {% block body_class %}admin{% endblock %}
 {% block content %}
@@ -28,7 +29,10 @@
   <tbody>
     {% for row in rows %}
     <tr>
-      {% for cell in row %}<td>{{ cell if cell is not none else "" }}</td>{% endfor %}
+      {% for cell in row %}
+      {% set column = columns[loop.index0] %}
+      <td{% if column in ("current_address", "current_normalized_address") %} class="address-cell"{% endif %}>{% if cell is not none and column in ("current_address", "current_normalized_address") %}{{ address_lines(cell, true) }}{% else %}{{ cell if cell is not none else "" }}{% endif %}</td>
+      {% endfor %}
       {% if table == "users" %}
       <td>
         {% if row[columns.index("unsubscribed_at")] %}
