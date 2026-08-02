@@ -169,6 +169,12 @@ a {
   margin: 0;
 }
 
+.admin td.address-cell {
+  min-width: 15rem;
+  line-height: 1.35;
+  text-wrap: pretty;
+}
+
 .table-actions {
   display: flex;
   gap: 0.5rem;

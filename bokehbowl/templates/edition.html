@@ -1,9 +1,5 @@
 {% extends "base.html" %}
-{% macro address_lines(address) %}
-        {{ address.address_line1 }}{% if address.address_line2 %}<br>{{ address.address_line2 }}{% endif %}<br>
-        {{ address.city }}{% if address.region %}, {{ address.region }}{% endif %} {{ address.postal_code }}<br>
-        {{ address.country }}
-{%- endmacro %}
+{% from "components/address.html" import address_lines %}
 {% macro normalize_link(edition, address) %}
         <a class="button-link" href="/admin/addresses/{{ address.id }}/normalize?edition={{ edition.id }}">Normalize</a>
 {%- endmacro %}

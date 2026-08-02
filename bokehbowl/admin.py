@@ -3,8 +3,9 @@
 import csv
 import io
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -23,8 +24,9 @@ from bokehbowl.db import (
     NormalizedAddress,
     User,
     UserSession,
-    latest_address,
-    latest_normalized_address,
+    current_address,
+    current_normalized_address,
+    latest_normalization_for_address,
     record_normalized_address,
     utcnow,
 )
@@ -46,12 +48,22 @@ router = APIRouter(prefix="/admin", dependencies=[Depends(require_csrf)])
 ADMIN_SESSION_TTL = timedelta(days=14)
 
 
-TABLES: dict[str, tuple[type[Base], InstrumentedAttribute]] = {
+TABLES: dict[str, tuple[type[Base], InstrumentedAttribute[datetime]]] = {
     "users": (User, User.created_at),
     "addresses": (Address, Address.created_at),
     "normalized_addresses": (NormalizedAddress, NormalizedAddress.created_at),
     "editions": (Edition, Edition.created_at),
     "mailpieces": (Mailpiece, Mailpiece.sent_at),
+}
+
+type SyntheticColumn = tuple[str, Callable[..., object]]
+
+
+SYNTHETIC_COLUMNS: dict[type[Base], tuple[SyntheticColumn, ...]] = {
+    User: (
+        ("current_address", current_address),
+        ("current_normalized_address", current_normalized_address),
+    )
 }
 
 
@@ -131,22 +143,33 @@ MailpieceById = Annotated[Mailpiece, Depends(require_mailpiece)]
 AddressById = Annotated[Address, Depends(require_address)]
 
 
-def require_table(name: str) -> tuple[type[Base], InstrumentedAttribute]:
+def require_table(
+    name: str,
+) -> tuple[type[Base], InstrumentedAttribute[datetime]]:
     if name not in TABLES:
         raise HTTPException(status_code=404)
     return TABLES[name]
 
 
-def columns_of(model: type[Base]) -> list[str]:
-    return [column.key for column in model.__table__.columns]
-
-
-def rows_of(
-    db: Session, model: type[Base], timestamp: InstrumentedAttribute
-) -> list[list[object]]:
-    columns = columns_of(model)
-    objects = db.scalars(select(model).order_by(timestamp.desc()))
-    return [[getattr(obj, column) for column in columns] for obj in objects]
+def table_data(
+    db: Session,
+    model: type[Base],
+    timestamp: InstrumentedAttribute[datetime],
+    synthetic: tuple[SyntheticColumn, ...] = (),
+) -> tuple[list[str], list[list[object]]]:
+    """Stored columns and rows, followed by any synthetic columns and values."""
+    columns = [column.key for column in model.__table__.columns]
+    rows = db.scalars(select(model).order_by(timestamp.desc()))
+    return (
+        [*columns, *(name for name, _ in synthetic)],
+        [
+            [
+                *(getattr(row, column) for column in columns),
+                *[value_of(db, row) for _, value_of in synthetic],
+            ]
+            for row in rows
+        ],
+    )
 
 
 @router.get("/login")
@@ -201,6 +224,15 @@ def dashboard(
     table: str = "users",
 ):
     model, timestamp = require_table(table)
+    columns, rows = table_data(
+        db,
+        model,
+        timestamp,
+        SYNTHETIC_COLUMNS.get(
+            model,
+            (),
+        ),
+    )
     counts = {
         name: db.scalar(select(func.count()).select_from(model))
         for name, (model, _) in TABLES.items()
@@ -210,8 +242,8 @@ def dashboard(
         "admin.html",
         {
             "table": table,
-            "columns": columns_of(model),
-            "rows": rows_of(db, model, timestamp),
+            "columns": columns,
+            "rows": rows,
             "counts": counts,
         },
     )
@@ -234,9 +266,8 @@ def resubscribe(db: Db, user: UserById):
 @router.get("/export.csv")
 def export(db: Db, _: AdminOnly, table: str = "users"):
     model, timestamp = require_table(table)
-    return csv_response(
-        f"bokehbowl-{table}.csv", columns_of(model), rows_of(db, model, timestamp)
-    )
+    columns, rows = table_data(db, model, timestamp)
+    return csv_response(f"bokehbowl-{table}.csv", columns, rows)
 
 
 def eligible_users(db: Session, edition: Edition) -> list[User]:
@@ -295,8 +326,8 @@ def unsent_recipients(db: Session, edition: Edition) -> list[Recipient]:
     for user in eligible_users(db, edition):
         if user.id in sent_ids:
             continue
-        address = latest_address(db, user.id)
-        normalized_address = latest_normalized_address(db, address)
+        address = current_address(db, user)
+        normalized_address = current_normalized_address(db, user)
         recipients.append(
             ReadyRecipient(user, address, normalized_address)
             if normalized_address is not None
@@ -409,7 +440,7 @@ def normalize_form(
         "normalize.html",
         {
             "address": address,
-            "current": latest_normalized_address(db, address) or address,
+            "current": latest_normalization_for_address(db, address) or address,
             "edition": edition,
         },
     )

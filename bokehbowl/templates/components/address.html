@@ -1,0 +1,6 @@
+{% macro address_lines(address, include_addressee=false) -%}
+        {% if include_addressee %}{{ address.addressee }}<br>{% endif %}
+        {{ address.address_line1 }}{% if address.address_line2 %}<br>{{ address.address_line2 }}{% endif %}<br>
+        {{ address.city }}{% if address.region %}, {{ address.region }}{% endif %} {{ address.postal_code }}<br>
+        {{ address.country }}
+{%- endmacro %}
