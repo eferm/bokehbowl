@@ -73,7 +73,10 @@ def csv_response(
     return Response(
         content=buffer.getvalue(),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": f"attachment; filename={filename}",
+        },
     )
 
 

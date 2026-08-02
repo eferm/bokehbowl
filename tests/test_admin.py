@@ -544,9 +544,10 @@ def test_renormalizing_appends_and_the_latest_normalized_address_wins(client, ma
         assert len(db.scalars(select(NormalizedAddress)).all()) == 2
 
     detail_url = create_edition(client, csrf)
-    labels = client.get(f"{detail_url}/labels.csv").text
-    assert "Flat 4" in labels
-    assert "Flat 3" not in labels
+    labels = client.get(f"{detail_url}/labels.csv")
+    assert labels.headers["cache-control"] == "no-store"
+    assert "Flat 4" in labels.text
+    assert "Flat 3" not in labels.text
 
 
 def test_the_address_components_value_matches_the_stored_columns():
