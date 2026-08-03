@@ -383,8 +383,44 @@ a {
   color: var(--muted);
 }
 
+select.form-control {
+  appearance: none;
+  height: 2.9rem;
+  padding-right: 2.5rem;
+}
+
+.select-control {
+  position: relative;
+  display: grid;
+}
+
+.select-control::after {
+  position: absolute;
+  top: 50%;
+  right: 0.9rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  content: "";
+  pointer-events: none;
+  transform: translateY(-70%) rotate(45deg);
+}
+
+select.form-control:invalid {
+  color: var(--muted);
+}
+
+select.form-control option {
+  color: #11110f;
+}
+
 .form-grid:disabled .form-control {
   border-color: transparent;
+  opacity: 0.5;
+}
+
+.form-grid:disabled .select-control::after {
   opacity: 0.5;
 }
 
