@@ -3,4 +3,5 @@ Allow: /
 Disallow: /account
 Disallow: /admin
 Disallow: /login
-Disallow: /verify
+Disallow: /signup
+Disallow: /goodbye

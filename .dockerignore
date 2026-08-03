@@ -2,15 +2,36 @@
 !.git/HEAD
 !.git/refs
 !.git/packed-refs
+
+# Local environments, data, and deployment records
 .venv
 .env
 data/
+backups/
+instance/docs/
+TODO.md
+
+# Generated Python and build artifacts
 __pycache__/
-*.pyc
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
 .pytest_cache/
 .ruff_cache/
+
+# Development-only inputs and tooling
+tests/
+vendor/
+scripts/
 .claude/
+.agents/
+.vscode/
 .security-audit-skill/
+.DS_Store
+
+# Docker configuration is available to the builder without entering the context
 .dockerignore
 Dockerfile
 compose.yaml
