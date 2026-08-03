@@ -331,14 +331,16 @@ def test_edition_workflow(client, mailer):
     detail = client.get(detail_url).text
     assert 'class="admin"' in detail
     assert "<h1>sailboat postcard</h1>" in detail
-    assert "Needs review (1)" in detail
-    assert "To send (0)" in detail
+    assert "<h2>To send (1)</h2>" in detail
+    assert "<h3>Needs review (1)</h3>" in detail
+    assert "<h3>Ready to send (0)</h3>" in detail
     assert "Ada Lovelace" in detail
 
     normalize_current_address(client, csrf)
     detail = client.get(detail_url).text
     assert "Needs review" not in detail
-    assert "To send (1)" in detail
+    assert "<h2>To send (1)</h2>" in detail
+    assert "<h3>Ready to send (1)</h3>" in detail
 
     normalized_id = normalized_address_id_from(detail)
     client.post(
@@ -412,6 +414,9 @@ def test_to_send_labels_its_address_as_normalized(client, mailer):
 
     detail = client.get(create_edition(client, csrf)).text
     assert "<th>Normalized address</th>" in detail
+    assert 'action="/admin/editions/' in detail
+    assert '/labels.csv">' in detail
+    assert '<button type="submit">Export to CSV</button>' in detail
 
 
 def test_unsubscribed_excluded_from_edition_list(client, mailer):
@@ -434,6 +439,10 @@ def test_signup_after_the_edition_is_left_off_it(client, mailer):
     detail = client.get(detail_url).text
     assert "To send (0)" in detail
     assert "Needs review" not in detail
+    assert "<details>" in detail
+    assert "Later signups (1)" in detail
+    assert 'type="checkbox" name="user_id"' in detail
+    assert "Export selected to CSV" in detail
 
     labels = client.get(f"{detail_url}/labels.csv")
     assert "Ada Lovelace" not in labels.text
@@ -459,20 +468,126 @@ def test_mark_sent_rejects_unsubscribed_user(client, mailer):
         assert db.scalars(select(Mailpiece)).all() == []
 
 
-def test_mark_sent_rejects_a_user_who_signed_up_after_the_edition(client, mailer):
+def test_later_signup_can_be_exported_and_marked_sent(client, mailer):
     csrf = admin_login(client)
     earlier = create_edition(client, csrf)
     sign_up_and_verify(client, mailer)
     normalize_current_address(client, csrf)
     later = create_edition(client, csrf)
     normalized_id = normalized_address_id_from(client.get(later).text)
-    response = client.post(
-        f"{earlier}/send/{sole_user_id(client)}",
-        data={"csrf": csrf, "normalized_address_id": normalized_id},
+    user_id = sole_user_id(client)
+
+    label = client.get(
+        f"{earlier}/labels-late.csv", params={"user_id": user_id}
     )
-    assert response.status_code == 409
+    assert label.status_code == 200
+    assert label.headers["cache-control"] == "no-store"
+    assert f"edition-{earlier.rsplit('/', maxsplit=1)[-1]}-late-to-send.csv" in (
+        label.headers["content-disposition"]
+    )
+    assert "Ada Lovelace" in label.text
+
+    response = client.post(
+        f"{earlier}/send/{user_id}",
+        data={"csrf": csrf, "normalized_address_id": normalized_id},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    detail = client.get(earlier).text
+    assert "Later signups" not in detail
+    assert "Sent (1)" in detail
     with Session(client.app.state.engine) as db:
-        assert db.scalars(select(Mailpiece)).all() == []
+        mailpiece = db.scalars(select(Mailpiece)).one()
+        mailpiece_id = mailpiece.id
+
+    client.post(f"/admin/mailpieces/{mailpiece_id}/delete", data={"csrf": csrf})
+    detail = client.get(earlier).text
+    assert "Later signups" in detail
+    assert "Sent (0)" in detail
+
+
+def test_selected_ready_later_signups_export_together(client, mailer):
+    csrf = admin_login(client)
+    edition = create_edition(client, csrf)
+    sign_up_and_verify(client, mailer)
+    normalize_current_address(client, csrf)
+
+    user_csrf = csrf_from(client.get("/account").text)
+    client.post("/logout", data={"csrf": user_csrf})
+    signup_csrf = csrf_from(client.get("/").text)
+    grace = {**SIGNUP_FORM, "email": "grace@example.com", "name": "Grace Hopper"}
+    client.post("/signup", data={**grace, "csrf": signup_csrf})
+    client.post(
+        "/signup/verify",
+        data={**grace, "csrf": signup_csrf, "code": mailer.last_code()},
+        follow_redirects=False,
+    )
+    normalize_current_address(client, csrf)
+
+    with Session(client.app.state.engine) as db:
+        user_ids = dict(db.execute(select(User.email, User.id)).all())
+
+    detail = client.get(edition).text
+    assert "Later signups (2)" in detail
+    assert detail.count('type="checkbox" name="user_id"') == 2
+    labels = client.get(
+        f"{edition}/labels-late.csv",
+        params=[
+            ("user_id", user_ids["ada@example.com"]),
+            ("user_id", user_ids["grace@example.com"]),
+        ],
+    )
+    assert labels.status_code == 200
+    assert "Ada Lovelace" in labels.text
+    assert "Grace Hopper" in labels.text
+    empty = client.get(f"{edition}/labels-late.csv")
+    assert empty.status_code == 200
+    assert empty.text.splitlines() == [",".join(ADDRESS_FIELDS)]
+
+
+def test_later_signup_needing_review_uses_the_existing_address_workflow(
+    client, mailer
+):
+    csrf = admin_login(client)
+    edition = create_edition(client, csrf)
+    sign_up_and_verify(client, mailer)
+    user_id = sole_user_id(client)
+
+    detail = client.get(edition).text
+    assert "Later signups" in detail
+    assert "Needs review" in detail
+    assert "Normalize" in detail
+    assert "Approve" in detail
+    assert "Export selected to CSV" not in detail
+    labels = client.get(
+        f"{edition}/labels-late.csv", params={"user_id": user_id}
+    )
+    assert labels.status_code == 200
+    assert labels.text.splitlines() == [",".join(ADDRESS_FIELDS)]
+
+    normalize_current_address(client, csrf)
+    detail = client.get(edition).text
+    assert "Ready to send (1)" in detail
+    assert "<th>Normalized address</th>" in detail
+    assert "<th>Export</th>" in detail
+    assert "table-actions--split" not in detail
+    assert "Normalize" in detail
+    assert "Export selected to CSV" in detail
+    assert "<th>Status</th>" not in detail
+
+
+def test_later_signup_follows_the_live_subscription(client, mailer):
+    csrf = admin_login(client)
+    edition = create_edition(client, csrf)
+    sign_up_and_verify(client, mailer)
+    user_id = sole_user_id(client)
+    assert "Later signups" in client.get(edition).text
+
+    client.post(f"/admin/users/{user_id}/unsubscribe", data={"csrf": csrf})
+    assert "Later signups" not in client.get(edition).text
+
+    client.post(f"/admin/users/{user_id}/resubscribe", data={"csrf": csrf})
+    assert "Later signups" in client.get(edition).text
 
 
 def test_mark_sent_with_an_unknown_normalized_address_is_404(client, mailer):

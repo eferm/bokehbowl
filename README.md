@@ -91,14 +91,23 @@ the account was already there; the account page is where addresses change.
 
 ### Create an edition
 
-At `/admin`, create an edition. An edition goes to the subscribed users who
-signed up by the time it was created; later signups wait for the next one.
+At `/admin`, create an edition. Its original bulk list contains the subscribed
+users who signed up by the time it was created; later signups wait for the next
+one by default.
 The edition page splits them into two groups. Needs review lists addresses
 awaiting a print version: Approve
 files the address as entered, and Normalize opens a form to edit it first. To
 send lists users whose current address has a print version, with a CSV
 export for labels. Marking an item sent records the print version on the
 envelope; the account page keeps showing what the user entered.
+
+The edition page also derives a collapsed list of later signups who have not
+received that edition. Any selection of reviewed addresses can be exported to
+one CSV for catch-up envelope printing and marked sent without adding them to
+the original bulk list. This workflow stores no pending selection: users remain
+candidates until mailpieces are recorded. Unsubscribing hides a candidate,
+resubscribing reveals them again, and undoing a mailpiece returns them to the
+list.
 
 The list is computed on each view, and the two halves of it are read at
 different moments by design: the signup cutoff is fixed at the edition's
@@ -111,9 +120,9 @@ or records the chosen users as rows when the edition is created.
 ### Data model
 
 - **users** — one row per verified email identity. `created_at` is the
-  verification moment; `unsubscribed_at` set means mail stops. An edition
-  goes to users with `unsubscribed_at` unset whose `created_at` precedes the
-  edition's. A signup's address travels in the
+  verification moment; `unsubscribed_at` set means mail stops. An edition's
+  original bulk list contains users with `unsubscribed_at` unset whose
+  `created_at` precedes the edition's. A signup's address travels in the
   form until verification creates the user and their first address in one
   transaction.
 - **addresses** — every postal address a user entered, append-only; the

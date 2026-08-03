@@ -3,12 +3,12 @@
 import csv
 import io
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Self
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
@@ -63,9 +63,7 @@ def current_addresses(db: Session, rows: list[Base]) -> list[object]:
 
 
 def current_normalized_addresses(db: Session, rows: list[Base]) -> list[object]:
-    return [
-        latest_normalized_address(db, current_address(db, row)) for row in rows
-    ]
+    return [latest_normalized_address(db, current_address(db, row)) for row in rows]
 
 
 def sent_mailpiece_counts(db: Session, rows: list[Base]) -> list[object]:
@@ -301,32 +299,6 @@ def export(db: Db, _: AdminOnly, table: str = "users"):
     return csv_response(f"bokehbowl-{table}.csv", columns, rows)
 
 
-def eligible_users(db: Session, edition: Edition) -> list[User]:
-    """Everyone the edition may be sent to: still subscribed, and signed up by
-    the time the edition was created. The one definition of who is on an
-    edition's list; the edition page and the send handler both ask it."""
-    return list(
-        db.scalars(
-            select(User)
-            .where(
-                User.unsubscribed_at.is_(None),
-                User.created_at <= edition.created_at,
-            )
-            .order_by(User.created_at)
-        )
-    )
-
-
-def mailpieces_of(db: Session, edition_id: str) -> list[Mailpiece]:
-    return list(
-        db.scalars(
-            select(Mailpiece)
-            .where(Mailpiece.edition_id == edition_id)
-            .order_by(Mailpiece.sent_at.desc())
-        )
-    )
-
-
 @dataclass(frozen=True)
 class ReviewRecipient:
     """A user whose current address awaits a print version."""
@@ -345,40 +317,71 @@ class ReadyRecipient:
     normalized_address: NormalizedAddress
 
 
-Recipient = ReviewRecipient | ReadyRecipient
-"""An unsent recipient, in the kind their current address makes them."""
+@dataclass(frozen=True)
+class RecipientGroup:
+    """Unsent recipients grouped by whether their current address is ready to
+    print."""
+
+    review: list[ReviewRecipient]
+    ready: list[ReadyRecipient]
+
+    @property
+    def count(self) -> int:
+        return len(self.review) + len(self.ready)
+
+    @classmethod
+    def from_users(cls, db: Session, users: Iterable[User]) -> Self:
+        review: list[ReviewRecipient] = []
+        ready: list[ReadyRecipient] = []
+        for user in users:
+            address = current_address(db, user)
+            normalized_address = latest_normalized_address(db, address)
+            if normalized_address is None:
+                review.append(ReviewRecipient(user, address))
+            else:
+                ready.append(ReadyRecipient(user, address, normalized_address))
+        return cls(review, ready)
 
 
-def unsent_recipients(db: Session, edition: Edition) -> list[Recipient]:
-    """Eligible users the edition has not gone to yet, each as the kind their
-    current address makes them."""
-    sent_ids = {mailpiece.user_id for mailpiece in mailpieces_of(db, edition.id)}
-    recipients: list[Recipient] = []
-    for user in eligible_users(db, edition):
-        if user.id in sent_ids:
-            continue
-        address = current_address(db, user)
-        normalized_address = latest_normalized_address(db, address)
-        recipients.append(
-            ReadyRecipient(user, address, normalized_address)
-            if normalized_address is not None
-            else ReviewRecipient(user, address)
+@dataclass(frozen=True)
+class EditionMailingView:
+    """The complete derived mailing workflow for one edition."""
+
+    base: RecipientGroup
+    late: RecipientGroup
+    sent: list[Mailpiece]
+
+    @classmethod
+    def from_edition(cls, db: Session, edition: Edition) -> Self:
+        """Build the edition's base, late-signup, and sent recipient groups.
+
+        Subscription is live, the original/catch-up boundary is the edition's
+        creation time, and recorded mailpieces are historical regardless of
+        current subscription.
+        """
+        sent = list(
+            db.scalars(
+                select(Mailpiece)
+                .where(Mailpiece.edition_id == edition.id)
+                .order_by(Mailpiece.sent_at.desc())
+            )
         )
-    return recipients
-
-
-def recipients_ready_to_send(recipients: list[Recipient]) -> list[ReadyRecipient]:
-    """Recipients whose current address has a print version."""
-    return [
-        recipient for recipient in recipients if isinstance(recipient, ReadyRecipient)
-    ]
-
-
-def recipients_needing_review(recipients: list[Recipient]) -> list[ReviewRecipient]:
-    """Recipients whose current address awaits a print version."""
-    return [
-        recipient for recipient in recipients if isinstance(recipient, ReviewRecipient)
-    ]
+        unsent = [
+            user
+            for user in db.scalars(
+                select(User)
+                .where(User.unsubscribed_at.is_(None))
+                .order_by(User.created_at)
+            )
+            if user.id not in {mailpiece.user_id for mailpiece in sent}
+        ]
+        base_users = [user for user in unsent if user.created_at <= edition.created_at]
+        late_users = [user for user in unsent if user.created_at > edition.created_at]
+        return cls(
+            base=RecipientGroup.from_users(db, base_users),
+            late=RecipientGroup.from_users(db, reversed(late_users)),
+            sent=sent,
+        )
 
 
 @router.post("/editions")
@@ -414,15 +417,12 @@ def delete_edition(edition: EditionById):
 def edition_detail(
     request: Request, db: Db, templates: Templates, edition: EditionById
 ):
-    unsent = unsent_recipients(db, edition)
     return templates.TemplateResponse(
         request,
         "edition.html",
         {
             "edition": edition,
-            "to_send": recipients_ready_to_send(unsent),
-            "needs_review": recipients_needing_review(unsent),
-            "mailpieces": mailpieces_of(db, edition.id),
+            "mailing": EditionMailingView.from_edition(db, edition),
         },
     )
 
@@ -434,13 +434,21 @@ def mark_sent(
     user: UserById,
     normalized_address_id: Annotated[str, Form()],
 ):
-    if user.id not in {eligible.id for eligible in eligible_users(db, edition)}:
+    # The bulk list has a creation-time cutoff, but this route also serves an
+    # operator's explicit catch-up send. A live subscription is the shared
+    # eligibility rule for both paths.
+    if user.unsubscribed_at is not None:
         raise HTTPException(status_code=409)
     normalized = db.get(NormalizedAddress, normalized_address_id)
     if normalized is None or normalized.address.user_id != user.id:
         raise HTTPException(status_code=404)
-    sent_ids = {mailpiece.user_id for mailpiece in mailpieces_of(db, edition.id)}
-    if user.id not in sent_ids:
+    already_sent = db.scalar(
+        select(Mailpiece.id).where(
+            Mailpiece.edition_id == edition.id,
+            Mailpiece.user_id == user.id,
+        )
+    )
+    if already_sent is None:
         db.add(
             Mailpiece(
                 edition_id=edition.id,
@@ -464,9 +472,25 @@ def export_labels(db: Db, edition: EditionById):
     columns = list(ADDRESS_FIELDS)
     rows = [
         [getattr(recipient.normalized_address, column) for column in columns]
-        for recipient in recipients_ready_to_send(unsent_recipients(db, edition))
+        for recipient in EditionMailingView.from_edition(db, edition).base.ready
     ]
     return csv_response(f"edition-{edition.id}-to-send.csv", columns, rows)
+
+
+@router.get("/editions/{edition_id}/labels-late.csv")
+def export_late_labels(
+    db: Db,
+    edition: EditionById,
+    user_id: Annotated[list[str] | None, Query()] = None,
+):
+    selected_ids = set(user_id or ())
+    columns = list(ADDRESS_FIELDS)
+    rows = [
+        [getattr(recipient.normalized_address, column) for column in columns]
+        for recipient in EditionMailingView.from_edition(db, edition).late.ready
+        if recipient.user.id in selected_ids
+    ]
+    return csv_response(f"edition-{edition.id}-late-to-send.csv", columns, rows)
 
 
 @router.get("/addresses/{address_id}/normalize")
