@@ -153,8 +153,8 @@ Each invariant lives at a named enforcement layer:
 
 The app reads one country name per line from
 `bokehbowl/resources/countries.txt`. CLDR's English locale data is archived at
-`sources/unicode-org/en.xml`, with its retrieval metadata, license, and
-checksum in `sources/sources.json`. Regenerate the runtime data with:
+`vendor/unicode-org/en.xml`, with its retrieval metadata, license, and
+checksum in `vendor/manifest.json`. Regenerate the runtime data with:
 
 ```sh
 python scripts/parse_cldr_countries.py

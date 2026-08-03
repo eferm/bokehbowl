@@ -9,7 +9,7 @@ from xml.etree.ElementTree import parse
 
 def main() -> None:
     root = Path(__file__).parent.parent
-    source = root / "sources" / "unicode-org" / "en.xml"
+    source = root / "vendor" / "unicode-org" / "en.xml"
     output = root / "bokehbowl" / "resources" / "countries.txt"
     excluded = {"EU", "EZ", "QO", "UN", "XA", "XB", "ZZ"}
     countries = {
