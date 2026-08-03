@@ -15,6 +15,9 @@ backups/
 .env
 .security-audit-skill/
 
+# Local planning notes
+TODO.md
+
 # Instance content (tracked: READMEs and directory placeholders)
 instance/static/*
 !instance/static/.gitkeep
