@@ -122,6 +122,8 @@ def test_wrong_password_rejected(client):
     csrf = csrf_from(client.get("/admin/login").text)
     response = client.post("/admin/login", data={"csrf": csrf, "password": "nope"})
     assert response.status_code == 401
+    assert 'value="nope"' not in response.text
+    assert 'autocomplete="current-password"' in response.text
 
 
 def test_users_table_shows_db_columns(client, mailer):

@@ -20,3 +20,6 @@ instance/static/*
 !instance/static/.gitkeep
 instance/templates/*
 !instance/templates/.gitkeep
+
+# Local deployment records (may contain instance-specific infrastructure details)
+instance/docs/
