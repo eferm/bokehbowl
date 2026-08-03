@@ -246,7 +246,12 @@ def test_deleting_an_edition_archives_it(client, mailer):
 def test_mailpieces_table_renders_empty(client, mailer):
     admin_login(client)
     page = client.get("/admin?table=mailpieces")
-    for column in ["edition_id", "user_id", "normalized_address_id"]:
+    for column in [
+        "edition_id",
+        "user_id",
+        "normalized_address_id",
+        "mailing_group",
+    ]:
         assert f"<th>{column}</th>" in page.text
     assert "Nothing here yet." in page.text
 
@@ -350,6 +355,8 @@ def test_edition_workflow(client, mailer):
     detail = client.get(detail_url).text
     assert "To send (0)" in detail
     assert "Sent (1)" in detail
+    assert "<th>Group</th>" in detail
+    assert "<td>Base</td>" in detail
 
     client.post(
         f"{detail_url}/send/{user_id}",
@@ -496,6 +503,10 @@ def test_later_signup_can_be_exported_and_marked_sent(client, mailer):
     detail = client.get(earlier).text
     assert "Later signups" not in detail
     assert "Sent (1)" in detail
+    assert "<td>Late</td>" in detail
+    mailpieces = client.get("/admin?table=mailpieces").text
+    assert "<th>mailing_group</th>" in mailpieces
+    assert "<td>late</td>" in mailpieces
     with Session(client.app.state.engine) as db:
         mailpiece = db.scalars(select(Mailpiece)).one()
         mailpiece_id = mailpiece.id

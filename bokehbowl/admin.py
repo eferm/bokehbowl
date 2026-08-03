@@ -3,7 +3,7 @@
 import csv
 import io
 import secrets
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Annotated, Self
@@ -24,9 +24,6 @@ from bokehbowl.db import (
     NormalizedAddress,
     User,
     UserSession,
-    current_address,
-    latest_normalized_address,
-    record_normalized_address,
     utcnow,
 )
 from bokehbowl.web import AddressForm, Db, Templates
@@ -54,37 +51,6 @@ TABLES: dict[str, tuple[type[Base], InstrumentedAttribute[datetime]]] = {
     "editions": (Edition, Edition.created_at),
     "mailpieces": (Mailpiece, Mailpiece.sent_at),
 }
-
-type SyntheticColumn = tuple[str, Callable[[Session, list[Base]], list[object]]]
-
-
-def current_addresses(db: Session, rows: list[Base]) -> list[object]:
-    return [current_address(db, row) for row in rows]
-
-
-def current_normalized_addresses(db: Session, rows: list[Base]) -> list[object]:
-    return [latest_normalized_address(db, current_address(db, row)) for row in rows]
-
-
-def sent_mailpiece_counts(db: Session, rows: list[Base]) -> list[object]:
-    counts = dict(
-        db.execute(
-            select(Mailpiece.edition_id, func.count())
-            .where(Mailpiece.edition_id.in_(row.id for row in rows))
-            .group_by(Mailpiece.edition_id)
-        ).all()
-    )
-    return [counts.get(row.id, 0) for row in rows]
-
-
-SYNTHETIC_COLUMNS: dict[type[Base], tuple[SyntheticColumn, ...]] = {
-    User: (
-        ("current_address", current_addresses),
-        ("current_normalized_address", current_normalized_addresses),
-    ),
-    Edition: (("sent_mailpieces", sent_mailpiece_counts),),
-}
-
 
 def formula_safe(value: object) -> object:
     """A CSV cell value with spreadsheet formula triggers neutralized."""
@@ -174,22 +140,15 @@ def table_data(
     db: Session,
     model: type[Base],
     timestamp: InstrumentedAttribute[datetime],
-    synthetic: tuple[SyntheticColumn, ...] = (),
+    include_derived: bool = False,
 ) -> tuple[list[str], list[list[object]]]:
-    """Stored columns and rows, followed by any synthetic columns and values."""
-    columns = [column.key for column in model.__table__.columns]
+    """Stored columns and property-backed derived columns for each row."""
+    columns = [
+        *(column.key for column in model.__table__.columns),
+        *(model.derived_property_names() if include_derived else ()),
+    ]
     records = list(db.scalars(select(model).order_by(timestamp.desc())))
-    synthetic_values = [values(db, records) for _, values in synthetic]
-    return (
-        [*columns, *(name for name, _ in synthetic)],
-        [
-            [
-                *(getattr(row, column) for column in columns),
-                *(values[index] for values in synthetic_values),
-            ]
-            for index, row in enumerate(records)
-        ],
-    )
+    return columns, [[getattr(row, column) for column in columns] for row in records]
 
 
 @router.get("/login")
@@ -218,9 +177,9 @@ def login(
     )
     session = AdminSession()
     db.add(session)
+    # The generated id is needed in the browser session before the response.
     db.flush()
     request.session["admin_session_id"] = session.id
-    db.commit()
     return RedirectResponse("/admin", status_code=303)
 
 
@@ -248,10 +207,7 @@ def dashboard(
         db,
         model,
         timestamp,
-        SYNTHETIC_COLUMNS.get(
-            model,
-            (),
-        ),
+        include_derived=True,
     )
     counts = {
         name: db.scalar(select(func.count()).select_from(model))
@@ -280,15 +236,14 @@ def confirm_unsubscribe(request: Request, templates: Templates, user: UserById):
 
 @router.post("/users/{user_id}/unsubscribe")
 def unsubscribe(db: Db, user: UserById):
-    if user.unsubscribed_at is None:
-        user.unsubscribed_at = utcnow()
+    user.unsubscribe(utcnow())
     db.execute(delete(UserSession).where(UserSession.user_id == user.id))
     return RedirectResponse("/admin", status_code=303)
 
 
 @router.post("/users/{user_id}/resubscribe")
-def resubscribe(db: Db, user: UserById):
-    user.unsubscribed_at = None
+def resubscribe(user: UserById):
+    user.resubscribe()
     return RedirectResponse("/admin", status_code=303)
 
 
@@ -330,12 +285,12 @@ class RecipientGroup:
         return len(self.review) + len(self.ready)
 
     @classmethod
-    def from_users(cls, db: Session, users: Iterable[User]) -> Self:
+    def from_users(cls, users: Iterable[User]) -> Self:
         review: list[ReviewRecipient] = []
         ready: list[ReadyRecipient] = []
         for user in users:
-            address = current_address(db, user)
-            normalized_address = latest_normalized_address(db, address)
+            address = user.current_address
+            normalized_address = user.current_normalized_address
             if normalized_address is None:
                 review.append(ReviewRecipient(user, address))
             else:
@@ -378,8 +333,8 @@ class EditionMailingView:
         base_users = [user for user in unsent if user.created_at <= edition.created_at]
         late_users = [user for user in unsent if user.created_at > edition.created_at]
         return cls(
-            base=RecipientGroup.from_users(db, base_users),
-            late=RecipientGroup.from_users(db, reversed(late_users)),
+            base=RecipientGroup.from_users(base_users),
+            late=RecipientGroup.from_users(reversed(late_users)),
             sent=sent,
         )
 
@@ -392,6 +347,7 @@ def create_edition(
 ):
     edition = Edition(title=title.strip())
     db.add(edition)
+    # The generated id is needed in the redirect URL before the response.
     db.flush()
     return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)
 
@@ -409,7 +365,7 @@ def confirm_delete_edition(
 
 @router.post("/editions/{edition_id}/delete")
 def delete_edition(edition: EditionById):
-    edition.deleted_at = utcnow()
+    edition.archive(utcnow())
     return RedirectResponse("/admin?table=editions", status_code=303)
 
 
@@ -449,11 +405,10 @@ def mark_sent(
         )
     )
     if already_sent is None:
-        db.add(
+        edition.mailpieces.append(
             Mailpiece(
-                edition_id=edition.id,
-                user_id=user.id,
-                normalized_address_id=normalized.id,
+                user=user,
+                normalized_address=normalized,
                 sent_at=utcnow(),
             )
         )
@@ -506,7 +461,7 @@ def normalize_form(
         "normalize.html",
         {
             "address": address,
-            "current": latest_normalized_address(db, address) or address,
+            "current": address.current_normalized_address or address,
             "edition": edition,
         },
     )
@@ -514,10 +469,9 @@ def normalize_form(
 
 @router.post("/addresses/{address_id}/normalize")
 def normalize_address(
-    db: Db,
     address: AddressById,
     form: Annotated[NormalizeForm, Form()],
 ):
-    record_normalized_address(db, address, form.components)
+    address.record_normalized_address(form.components)
     destination = f"/admin/editions/{form.edition}" if form.edition else "/admin"
     return RedirectResponse(destination, status_code=303)

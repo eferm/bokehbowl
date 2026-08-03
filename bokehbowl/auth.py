@@ -1,8 +1,7 @@
 """Login codes (email OTP), CSRF tokens, and session access."""
 
-import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import BackgroundTasks, HTTPException, Request
 from sqlalchemy import select, update
@@ -12,42 +11,17 @@ from bokehbowl.db import LoginCode, utcnow
 from bokehbowl.mailer import Mailer
 
 
-CODE_TTL = timedelta(minutes=10)
-
-
-def hash_code(email: str, code: str) -> str:
-    return hashlib.sha256(f"{email}:{code}".encode()).hexdigest()
-
-
-def latest_code(db: Session, email: str) -> LoginCode | None:
-    return db.scalar(
+def consume_login_code(db: Session, email: str, code: str, now: datetime) -> bool:
+    """Consume and accept the latest unexpired code when its hash matches."""
+    current = db.scalar(
         select(LoginCode)
         .where(LoginCode.email == email, LoginCode.consumed_at.is_(None))
         .order_by(LoginCode.created_at.desc())
         .limit(1)
     )
-
-
-def issue_login_code(db: Session, email: str, now: datetime) -> str:
-    """Create and store a fresh code, returning it."""
-    code = f"{secrets.randbelow(1_000_000):06d}"
-    db.add(
-        LoginCode(
-            email=email,
-            code_hash=hash_code(email, code),
-            created_at=now,
-            expires_at=now + CODE_TTL,
-        )
-    )
-    return code
-
-
-def consume_login_code(db: Session, email: str, code: str, now: datetime) -> bool:
-    """Consume and accept the latest unexpired code when its hash matches."""
-    current = latest_code(db, email)
     if current is None or now > current.expires_at:
         return False
-    if not secrets.compare_digest(current.code_hash, hash_code(email, code)):
+    if not current.matches(code):
         return False
     consumed = db.execute(
         update(LoginCode)
@@ -80,10 +54,10 @@ async def require_csrf(request: Request) -> None:
 def send_login_code(
     db: Session, mailer: Mailer, email: str, background: BackgroundTasks
 ) -> None:
-    """Issue and commit a code, then enqueue its email after the response."""
+    """Issue a code and enqueue its email after the request commits."""
     now = utcnow()
-    code = issue_login_code(db, email, now)
-    db.commit()
+    login_code, code = LoginCode.issue(email, now)
+    db.add(login_code)
     background.add_task(
         mailer.send,
         to=email,

@@ -156,7 +156,7 @@
 <table class="mailing-table">
   {{ mailing_columns() }}
   <thead>
-    <tr><th>Name</th><th>Address on envelope</th><th>Sent</th><th></th><th></th><th></th></tr>
+    <tr><th>Name</th><th>Address on envelope</th><th>Group</th><th>Sent</th><th></th><th></th></tr>
   </thead>
   <tbody>
     {% for s in mailing.sent %}
@@ -164,8 +164,8 @@
     <tr>
       <td>{{ printed.addressee }}</td>
       <td>{{ address_lines(printed) }}</td>
+      <td>{{ s.mailing_group | capitalize }}</td>
       <td>{{ s.sent_at.date() }}</td>
-      <td></td>
       <td>
         <form method="post" action="/admin/mailpieces/{{ s.id }}/delete">
           <input type="hidden" name="csrf" value="{{ csrf }}">
