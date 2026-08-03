@@ -405,8 +405,9 @@ def mark_sent(
         )
     )
     if already_sent is None:
-        edition.mailpieces.append(
+        db.add(
             Mailpiece(
+                edition=edition,
                 user=user,
                 normalized_address=normalized,
                 sent_at=utcnow(),
