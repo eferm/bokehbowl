@@ -1,4 +1,5 @@
 import re
+from dataclasses import fields
 from typing import get_args, get_type_hints
 
 import pytest
@@ -7,7 +8,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from bokehbowl.db import (
-    ADDRESS_FIELDS,
     Address,
     AddressComponents,
     Edition,
@@ -553,7 +553,9 @@ def test_selected_ready_later_signups_export_together(client, mailer):
     assert "Grace Hopper" in labels.text
     empty = client.get(f"{edition}/labels-late.csv")
     assert empty.status_code == 200
-    assert empty.text.splitlines() == [",".join(ADDRESS_FIELDS)]
+    assert empty.text.splitlines() == [
+        ",".join(field.name for field in fields(AddressComponents))
+    ]
 
 
 def test_later_signup_needing_review_uses_the_existing_address_workflow(
@@ -574,7 +576,9 @@ def test_later_signup_needing_review_uses_the_existing_address_workflow(
         f"{edition}/labels-late.csv", params={"user_id": user_id}
     )
     assert labels.status_code == 200
-    assert labels.text.splitlines() == [",".join(ADDRESS_FIELDS)]
+    assert labels.text.splitlines() == [
+        ",".join(field.name for field in fields(AddressComponents))
+    ]
 
     normalize_current_address(client, csrf)
     detail = client.get(edition).text
@@ -776,10 +780,11 @@ def test_the_address_components_value_matches_the_stored_columns():
         for name, hint in get_type_hints(AddressComponents).items()
         if type(None) in get_args(hint)
     }
+    component_fields = {field.name for field in fields(AddressComponents)}
     for table in (Address, NormalizedAddress):
         columns = {column.name: column for column in table.__table__.columns}
         stored = set(columns) - {"id", "user_id", "address_id", "created_at"}
-        assert set(ADDRESS_FIELDS) == stored
+        assert component_fields == stored
         assert optional == {name for name in stored if columns[name].nullable}
 
 

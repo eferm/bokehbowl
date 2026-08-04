@@ -4,7 +4,7 @@ import csv
 import io
 import secrets
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime, timedelta
 from typing import Annotated, Self
 
@@ -15,8 +15,8 @@ from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from bokehbowl.auth import require_csrf
 from bokehbowl.db import (
-    ADDRESS_FIELDS,
     Address,
+    AddressComponents,
     AdminSession,
     Base,
     Edition,
@@ -425,7 +425,7 @@ def delete_mailpiece(db: Db, mailpiece: MailpieceById):
 
 @router.get("/editions/{edition_id}/labels.csv")
 def export_labels(db: Db, edition: EditionById):
-    columns = list(ADDRESS_FIELDS)
+    columns = [field.name for field in fields(AddressComponents)]
     rows = [
         [getattr(recipient.normalized_address, column) for column in columns]
         for recipient in EditionMailingView.from_edition(db, edition).base.ready
@@ -440,7 +440,7 @@ def export_late_labels(
     user_id: Annotated[list[str] | None, Query()] = None,
 ):
     selected_ids = set(user_id or ())
-    columns = list(ADDRESS_FIELDS)
+    columns = [field.name for field in fields(AddressComponents)]
     rows = [
         [getattr(recipient.normalized_address, column) for column in columns]
         for recipient in EditionMailingView.from_edition(db, edition).late.ready

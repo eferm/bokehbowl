@@ -3,7 +3,7 @@
 import hashlib
 import secrets
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import ClassVar, Self
 from uuid6 import uuid7
@@ -67,10 +67,6 @@ class AddressComponents:
     region: str | None
     postal_code: str
     country: str
-
-
-ADDRESS_FIELDS = tuple(field.name for field in fields(AddressComponents))
-"""The address column names, in declaration order."""
 
 
 class AddressMixin:
