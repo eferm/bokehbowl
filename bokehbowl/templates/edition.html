@@ -165,7 +165,7 @@
       <td>{{ printed.addressee }}</td>
       <td>{{ address_lines(printed) }}</td>
       <td>{{ s.mailing_group | capitalize }}</td>
-      <td>{{ s.sent_at.date() }}</td>
+      <td>{{ s.sent_on }}</td>
       <td>
         <form method="post" action="/admin/mailpieces/{{ s.id }}/delete">
           <input type="hidden" name="csrf" value="{{ csrf }}">

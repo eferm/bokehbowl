@@ -1,4 +1,5 @@
 import re
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -48,6 +49,7 @@ def make_client(mailer):
                 mail=ConsoleMail(),
                 operator_name="Testy Operator",
                 operator_email="operator@example.com",
+                operator_tz=ZoneInfo("America/New_York"),
                 notify_email="notify@example.com",
                 commit="abc1234def5678",
             ),

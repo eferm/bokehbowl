@@ -3,7 +3,7 @@
 import hashlib
 import secrets
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import ClassVar, Self
 from uuid6 import uuid7
 
@@ -265,6 +265,7 @@ class Mailpiece(Base):
     )
     normalized_address_id: Mapped[str] = mapped_column(String(36))
     sent_at: Mapped[datetime] = mapped_column(default=utcnow)
+    sent_on: Mapped[date]
 
     edition: Mapped[Edition] = relationship(back_populates="mailpieces")
     user: Mapped[User] = relationship(back_populates="mailpieces")
