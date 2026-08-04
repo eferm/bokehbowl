@@ -202,6 +202,10 @@ def test_base_revision_creates_the_schema(base_database):
         "login_codes",
         "admin_sessions",
     } <= tables
+    login_code_columns = {
+        row["name"] for row in rows(engine, "PRAGMA table_info(login_codes)")
+    }
+    assert "attempts" not in login_code_columns
 
 
 def test_head_keeps_verified_users_and_drops_unverified(base_database):
@@ -232,11 +236,13 @@ def test_head_keeps_verified_users_and_drops_unverified(base_database):
     normalized = by_id(engine, "SELECT * FROM normalized_addresses")
     ada_print = normalized[mailpieces["mp-ada"]["normalized_address_id"]]
     assert ada_print["address_id"] == "v-ada-1"
+    assert ada_print["user_id"] == "ada"
     assert ada_print["addressee"] == "Ada Lovelace"
     assert ada_print["address_line1"] == "12 Analytical Way"
     assert ada_print["created_at"] == DAY_3
     grace_print = normalized[mailpieces["mp-grace"]["normalized_address_id"]]
     assert grace_print["address_id"] == "v-grace-1"
+    assert grace_print["user_id"] == "grace"
     assert grace_print["address_line1"] == "3 Mark II Lane"
     assert grace_print["created_at"] == DAY_3
 
@@ -271,6 +277,19 @@ def test_head_stops_on_a_mailpiece_held_by_an_unverified_user(base_database):
     }
 
 
+def test_head_stops_on_a_mailpiece_carrying_another_users_address(base_database):
+    config, engine = base_database
+    command.upgrade(config, "4fd713a86b9c")
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM mailpieces WHERE id = 'mp-grace'"))
+        conn.execute(
+            text("UPDATE mailpieces SET user_id = 'grace' WHERE id = 'mp-ada'")
+        )
+
+    with pytest.raises(RuntimeError, match="mp-ada"):
+        command.upgrade(config, "head")
+
+
 def test_head_satisfies_every_foreign_key(base_database):
     config, engine = base_database
     command.upgrade(config, "head")
@@ -291,6 +310,7 @@ def test_head_moves_derived_rows_into_normalized_addresses(base_database):
     assert normalized["d-ada-1"] == {
         "id": "d-ada-1",
         "address_id": "v-ada-3",
+        "user_id": "ada",
         "addressee": "ADA LOVELACE",
         "address_line1": "1 OCKHAM PK",
         "address_line2": None,
@@ -304,6 +324,10 @@ def test_head_moves_derived_rows_into_normalized_addresses(base_database):
     assert mailpieces["mp-ada"]["normalized_address_id"] == "d-ada-1"
 
     command.downgrade(config, BASE_REVISION)
+    login_code_columns = {
+        row["name"] for row in rows(engine, "PRAGMA table_info(login_codes)")
+    }
+    assert "attempts" in login_code_columns
     addresses = by_id(engine, "SELECT * FROM addresses")
     assert addresses["d-ada-1"] == DERIVED_ROW
     mailpieces = by_id(engine, "SELECT * FROM mailpieces")

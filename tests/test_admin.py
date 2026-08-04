@@ -689,7 +689,7 @@ def test_approve_files_the_shown_address_as_the_print_version(client, mailer):
     assert "To send (1)" in detail
 
 
-def test_mark_sent_with_a_normalized_address_of_another_users_address_is_404(
+def test_another_users_normalized_address_is_rejected_by_route_and_database(
     client, mailer
 ):
     sign_up_and_verify(client, mailer)
@@ -738,6 +738,15 @@ def test_mark_sent_with_a_normalized_address_of_another_users_address_is_404(
     assert response.status_code == 404
     with Session(client.app.state.engine) as db:
         assert db.scalars(select(Mailpiece)).all() == []
+        db.add(
+            Mailpiece(
+                edition_id=detail_url.rsplit("/", 1)[-1],
+                user_id=ada_id,
+                normalized_address_id=graces_normalized_address,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.commit()
 
 
 def test_new_address_supersedes_the_old_rows_normalized_address(client, mailer):

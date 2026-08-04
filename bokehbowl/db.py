@@ -10,6 +10,7 @@ from uuid6 import uuid7
 from sqlalchemy import (
     Engine,
     ForeignKey,
+    ForeignKeyConstraint,
     String,
     UniqueConstraint,
     create_engine,
@@ -152,6 +153,9 @@ class Address(AddressMixin, Base):
     row; the latest row is current."""
 
     __tablename__ = "addresses"
+    __table_args__ = (
+        UniqueConstraint("id", "user_id", name="uq_addresses_id_user_id"),
+    )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=new_id, sort_order=-2
@@ -164,6 +168,10 @@ class Address(AddressMixin, Base):
     user: Mapped[User] = relationship(back_populates="addresses")
     normalized_addresses: Mapped[list["NormalizedAddress"]] = relationship(
         back_populates="address",
+        foreign_keys=lambda: (
+            NormalizedAddress.address_id,
+            NormalizedAddress.user_id,
+        ),
         order_by=lambda: (NormalizedAddress.created_at, NormalizedAddress.id),
     )
 
@@ -187,16 +195,27 @@ class NormalizedAddress(AddressMixin, Base):
     for their address, and an address is sendable once it has one."""
 
     __tablename__ = "normalized_addresses"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ("address_id", "user_id"),
+            ("addresses.id", "addresses.user_id"),
+            name="fk_normalized_addresses_address_user",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("id", "user_id", name="uq_normalized_addresses_id_user_id"),
+    )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=new_id, sort_order=-2
     )
-    address_id: Mapped[str] = mapped_column(
-        ForeignKey("addresses.id", ondelete="CASCADE"), index=True, sort_order=-1
-    )
+    address_id: Mapped[str] = mapped_column(String(36), index=True, sort_order=-1)
+    user_id: Mapped[str] = mapped_column(String(36), sort_order=-1)
     created_at: Mapped[datetime] = mapped_column(default=utcnow, sort_order=1)
 
-    address: Mapped[Address] = relationship(back_populates="normalized_addresses")
+    address: Mapped[Address] = relationship(
+        back_populates="normalized_addresses",
+        foreign_keys=(address_id, user_id),
+    )
 
 
 class Edition(Base):
@@ -229,21 +248,29 @@ class Mailpiece(Base):
     of record at send time is that row's parent."""
 
     __tablename__ = "mailpieces"
-    __table_args__ = (UniqueConstraint("edition_id", "user_id"),)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ("normalized_address_id", "user_id"),
+            ("normalized_addresses.id", "normalized_addresses.user_id"),
+            name="fk_mailpieces_normalized_address_user",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("edition_id", "user_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     edition_id: Mapped[str] = mapped_column(ForeignKey("editions.id"), index=True)
     user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    normalized_address_id: Mapped[str] = mapped_column(
-        ForeignKey("normalized_addresses.id", ondelete="CASCADE")
-    )
+    normalized_address_id: Mapped[str] = mapped_column(String(36))
     sent_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     edition: Mapped[Edition] = relationship(back_populates="mailpieces")
     user: Mapped[User] = relationship(back_populates="mailpieces")
-    normalized_address: Mapped[NormalizedAddress] = relationship()
+    normalized_address: Mapped[NormalizedAddress] = relationship(
+        foreign_keys=(normalized_address_id,)
+    )
 
     @property
     def mailing_group(self) -> str:
@@ -262,7 +289,6 @@ class LoginCode(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     expires_at: Mapped[datetime]
     consumed_at: Mapped[datetime | None]
-    attempts: Mapped[int] = mapped_column(default=0)
 
     @staticmethod
     def hash(email: str, code: str) -> str:
