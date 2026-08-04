@@ -44,13 +44,27 @@ router = APIRouter(prefix="/admin", dependencies=[Depends(require_csrf)])
 ADMIN_SESSION_TTL = timedelta(days=14)
 
 
-TABLES: dict[str, tuple[type[Base], InstrumentedAttribute[datetime]]] = {
-    "users": (User, User.created_at),
-    "addresses": (Address, Address.created_at),
-    "normalized_addresses": (NormalizedAddress, NormalizedAddress.created_at),
-    "editions": (Edition, Edition.created_at),
-    "mailpieces": (Mailpiece, Mailpiece.sent_at),
+@dataclass(frozen=True)
+class TableView:
+    model: type[Base]
+    timestamp: InstrumentedAttribute[datetime]
+    properties: tuple[str, ...] = ()
+
+
+TABLES: dict[str, TableView] = {
+    "users": TableView(
+        User,
+        User.created_at,
+        ("current_address", "current_normalized_address"),
+    ),
+    "addresses": TableView(Address, Address.created_at),
+    "normalized_addresses": TableView(
+        NormalizedAddress, NormalizedAddress.created_at
+    ),
+    "editions": TableView(Edition, Edition.created_at, ("sent_mailpieces",)),
+    "mailpieces": TableView(Mailpiece, Mailpiece.sent_at, ("mailing_group",)),
 }
+
 
 def formula_safe(value: object) -> object:
     """A CSV cell value with spreadsheet formula triggers neutralized."""
@@ -128,9 +142,7 @@ MailpieceById = Annotated[Mailpiece, Depends(require_mailpiece)]
 AddressById = Annotated[Address, Depends(require_address)]
 
 
-def require_table(
-    name: str,
-) -> tuple[type[Base], InstrumentedAttribute[datetime]]:
+def require_table(name: str) -> TableView:
     if name not in TABLES:
         raise HTTPException(status_code=404)
     return TABLES[name]
@@ -138,16 +150,16 @@ def require_table(
 
 def table_data(
     db: Session,
-    model: type[Base],
-    timestamp: InstrumentedAttribute[datetime],
-    include_derived: bool = False,
+    view: TableView,
 ) -> tuple[list[str], list[list[object]]]:
-    """Stored columns and property-backed derived columns for each row."""
+    """Stored columns and configured property values for each row."""
     columns = [
-        *(column.key for column in model.__table__.columns),
-        *(model.derived_property_names() if include_derived else ()),
+        *(column.key for column in view.model.__table__.columns),
+        *view.properties,
     ]
-    records = list(db.scalars(select(model).order_by(timestamp.desc())))
+    records = list(
+        db.scalars(select(view.model).order_by(view.timestamp.desc()))
+    )
     return columns, [[getattr(row, column) for column in columns] for row in records]
 
 
@@ -202,16 +214,11 @@ def dashboard(
     _: AdminOnly,
     table: str = "users",
 ):
-    model, timestamp = require_table(table)
-    columns, rows = table_data(
-        db,
-        model,
-        timestamp,
-        include_derived=True,
-    )
+    view = require_table(table)
+    columns, rows = table_data(db, view)
     counts = {
-        name: db.scalar(select(func.count()).select_from(model))
-        for name, (model, _) in TABLES.items()
+        name: db.scalar(select(func.count()).select_from(view.model))
+        for name, view in TABLES.items()
     }
     return templates.TemplateResponse(
         request,
@@ -249,8 +256,8 @@ def resubscribe(user: UserById):
 
 @router.get("/export.csv")
 def export(db: Db, _: AdminOnly, table: str = "users"):
-    model, timestamp = require_table(table)
-    columns, rows = table_data(db, model, timestamp)
+    view = require_table(table)
+    columns, rows = table_data(db, view)
     return csv_response(f"bokehbowl-{table}.csv", columns, rows)
 
 

@@ -2,7 +2,6 @@
 
 import hashlib
 import secrets
-from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import ClassVar, Self
@@ -34,25 +33,8 @@ def new_id() -> str:
     return str(uuid7())
 
 
-class DerivedProperty(property):
-    """A computed model field discoverable alongside stored database columns."""
-
-
-def derived_property(method: Callable[..., object]) -> DerivedProperty:
-    return DerivedProperty(method)
-
-
 class Base(DeclarativeBase):
-    @classmethod
-    def derived_property_names(cls) -> tuple[str, ...]:
-        """Names of computed fields exposed alongside stored columns."""
-        columns: dict[str, DerivedProperty] = {}
-        for base in reversed(cls.__mro__):
-            for name, value in vars(base).items():
-                columns.pop(name, None)
-                if isinstance(value, DerivedProperty):
-                    columns[name] = value
-        return tuple(columns)
+    pass
 
 
 @dataclass(frozen=True)
@@ -142,12 +124,12 @@ class User(Base):
         """Resume mail for this user."""
         self.unsubscribed_at = None
 
-    @derived_property
+    @property
     def current_address(self) -> "Address":
         """The latest address, with creation-time ties broken by id."""
         return self.addresses[-1]
 
-    @derived_property
+    @property
     def current_normalized_address(self) -> "NormalizedAddress | None":
         """The latest print version of the current address, if one exists."""
         return self.current_address.current_normalized_address
@@ -230,7 +212,7 @@ class Edition(Base):
 
     mailpieces: Mapped[list["Mailpiece"]] = relationship(back_populates="edition")
 
-    @derived_property
+    @property
     def sent_mailpieces(self) -> int:
         """The number of physical pieces recorded for this edition."""
         return len(self.mailpieces)
@@ -263,7 +245,7 @@ class Mailpiece(Base):
     user: Mapped[User] = relationship(back_populates="mailpieces")
     normalized_address: Mapped[NormalizedAddress] = relationship()
 
-    @derived_property
+    @property
     def mailing_group(self) -> str:
         """The edition group this recipient belongs to, derived from signup time."""
         return "base" if self.user.created_at <= self.edition.created_at else "late"

@@ -843,6 +843,7 @@ def test_csv_export_matches_table(client, mailer):
     assert response.status_code == 200
     header = response.text.splitlines()[0]
     assert header.startswith("id,email,unsubscribed_at")
+    assert header.endswith("current_address,current_normalized_address")
     assert "ada@example.com" in response.text
     addresses = client.get("/admin/export.csv?table=addresses")
     assert "postal_code" in addresses.text.splitlines()[0]
