@@ -103,8 +103,7 @@ files the address as entered, and Normalize opens a form to edit it first. To
 send lists users whose current address has a print version, with a CSV
 export for labels. Marking an item sent records the print version on the
 envelope and the local mailing date; the account page keeps showing what the
-user entered. The date is derived from the UTC audit timestamp in
-`OPERATOR_TZ`.
+user entered.
 
 The edition page also derives a collapsed list of later signups who have not
 received that edition. Any selection of reviewed addresses can be exported to
