@@ -48,7 +48,7 @@ ADMIN_SESSION_TTL = timedelta(days=14)
 class TableView:
     model: type[Base]
     timestamp: InstrumentedAttribute[datetime]
-    properties: tuple[str, ...] = ()
+    derived_properties: tuple[str, ...] = ()
 
 
 TABLES: dict[str, TableView] = {
@@ -155,7 +155,7 @@ def table_data(
     """Stored columns and configured property values for each row."""
     columns = [
         *(column.key for column in view.model.__table__.columns),
-        *view.properties,
+        *view.derived_properties,
     ]
     records = list(
         db.scalars(select(view.model).order_by(view.timestamp.desc()))
