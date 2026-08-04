@@ -5,7 +5,7 @@ import io
 import secrets
 from collections.abc import Iterable
 from dataclasses import dataclass, fields
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Self
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -392,6 +392,7 @@ def edition_detail(
 
 @router.post("/editions/{edition_id}/send/{user_id}")
 def mark_sent(
+    request: Request,
     db: Db,
     edition: EditionById,
     user: UserById,
@@ -405,6 +406,12 @@ def mark_sent(
     normalized = db.get(NormalizedAddress, normalized_address_id)
     if normalized is None or normalized.address.user_id != user.id:
         raise HTTPException(status_code=404)
+    now = utcnow()
+    sent_on = (
+        now.replace(tzinfo=UTC)
+        .astimezone(request.app.state.config.operator_tz)
+        .date()
+    )
     already_sent = db.scalar(
         select(Mailpiece.id).where(
             Mailpiece.edition_id == edition.id,
@@ -417,7 +424,8 @@ def mark_sent(
                 edition=edition,
                 user=user,
                 normalized_address=normalized,
-                sent_at=utcnow(),
+                sent_at=now,
+                sent_on=sent_on,
             )
         )
     return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)

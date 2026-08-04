@@ -2,6 +2,7 @@ import base64
 import json
 from datetime import timedelta
 from email.message import EmailMessage
+from zoneinfo import ZoneInfoNotFoundError
 
 import pytest
 from sqlalchemy import delete, select, update
@@ -152,8 +153,26 @@ def test_notify_email_falls_back_to_operator_email(monkeypatch):
     monkeypatch.setenv("SESSION_SECRET", "secret")
     monkeypatch.setenv("ADMIN_PASSWORD", "password")
     monkeypatch.setenv("OPERATOR_EMAIL", "operator@example.com")
+    monkeypatch.setenv("OPERATOR_TZ", "America/New_York")
     monkeypatch.delenv("NOTIFY_EMAIL", raising=False)
-    assert load_config().notify_email == "operator@example.com"
+    config = load_config()
+    assert config.notify_email == "operator@example.com"
+    assert config.operator_tz.key == "America/New_York"
+
+
+def test_invalid_operator_tz_is_rejected(monkeypatch):
+    monkeypatch.setenv("SESSION_SECRET", "secret")
+    monkeypatch.setenv("ADMIN_PASSWORD", "password")
+    monkeypatch.setenv("OPERATOR_TZ", "not/a-timezone")
+    with pytest.raises(ZoneInfoNotFoundError):
+        load_config()
+
+
+def test_operator_tz_defaults_to_utc(monkeypatch):
+    monkeypatch.setenv("SESSION_SECRET", "secret")
+    monkeypatch.setenv("ADMIN_PASSWORD", "password")
+    monkeypatch.delenv("OPERATOR_TZ", raising=False)
+    assert load_config().operator_tz.key == "UTC"
 
 
 def test_email_is_normalized_and_not_duplicated(client, mailer):

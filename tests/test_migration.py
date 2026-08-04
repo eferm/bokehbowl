@@ -170,6 +170,7 @@ def base_database(tmp_path, monkeypatch) -> tuple[Config, Engine]:
     """A database at the base revision, loaded with the fixture rows."""
     url = f"sqlite:///{tmp_path}/bokehbowl.db"
     monkeypatch.setenv("DATABASE_URL", url)
+    monkeypatch.setenv("OPERATOR_TZ", "America/New_York")
     config = Config()
     config.set_main_option("script_location", str(REPO_ROOT / "migrations"))
     command.upgrade(config, BASE_REVISION)
@@ -232,6 +233,7 @@ def test_head_keeps_verified_users_and_drops_unverified(base_database):
     mailpieces = by_id(engine, "SELECT * FROM mailpieces")
     assert set(mailpieces) == {"mp-ada", "mp-grace"}
     assert "address_id" not in mailpieces["mp-ada"]
+    assert mailpieces["mp-ada"]["sent_on"] == "2026-01-03"
 
     normalized = by_id(engine, "SELECT * FROM normalized_addresses")
     ada_print = normalized[mailpieces["mp-ada"]["normalized_address_id"]]
@@ -295,6 +297,40 @@ def test_head_satisfies_every_foreign_key(base_database):
     command.upgrade(config, "head")
 
     assert rows(engine, "PRAGMA foreign_key_check") == []
+
+
+def test_head_backfills_the_operator_local_sent_date(base_database):
+    config, engine = base_database
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE mailpieces SET sent_at = '2026-01-03 02:00:00.000000'"
+                " WHERE id = 'mp-ada'"
+            )
+        )
+
+    command.upgrade(config, "head")
+
+    mailpieces = by_id(engine, "SELECT * FROM mailpieces")
+    assert mailpieces["mp-ada"]["sent_on"] == "2026-01-02"
+    assert mailpieces["mp-grace"]["sent_on"] == "2026-01-03"
+
+
+def test_head_defaults_the_backfill_timezone_to_utc(base_database, monkeypatch):
+    config, engine = base_database
+    monkeypatch.delenv("OPERATOR_TZ")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE mailpieces SET sent_at = '2026-01-03 02:00:00.000000'"
+                " WHERE id = 'mp-ada'"
+            )
+        )
+
+    command.upgrade(config, "head")
+
+    mailpieces = by_id(engine, "SELECT * FROM mailpieces")
+    assert mailpieces["mp-ada"]["sent_on"] == "2026-01-03"
 
 
 def test_head_moves_derived_rows_into_normalized_addresses(base_database):

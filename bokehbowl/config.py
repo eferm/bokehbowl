@@ -3,6 +3,7 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class AppConfig:
     mail: MailConfig
     operator_name: str
     operator_email: str
+    operator_tz: ZoneInfo
     notify_email: str
     commit: str | None
 
@@ -82,6 +84,7 @@ def load_config() -> AppConfig:
         mail=MAIL_BACKENDS[os.environ.get("MAIL_BACKEND", "console")](),
         operator_name=os.environ.get("OPERATOR_NAME", "the operator of this instance"),
         operator_email=operator_email,
+        operator_tz=ZoneInfo(os.environ.get("OPERATOR_TZ", "UTC")),
         notify_email=os.environ.get("NOTIFY_EMAIL") or operator_email,
         commit=os.environ.get("GIT_COMMIT") or read_git_commit(),
     )

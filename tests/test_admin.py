@@ -1,5 +1,6 @@
 import re
 from dataclasses import fields
+from datetime import date, datetime
 from typing import get_args, get_type_hints
 
 import pytest
@@ -7,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import bokehbowl.admin as admin
 from bokehbowl.db import (
     Address,
     AddressComponents,
@@ -370,6 +372,34 @@ def test_edition_workflow(client, mailer):
     detail = client.get(detail_url).text
     assert "To send (1)" in detail
     assert "Sent (0)" in detail
+
+
+def test_mark_sent_records_the_operator_local_date(client, mailer, monkeypatch):
+    sign_up_and_verify(client, mailer)
+    csrf = admin_login(client)
+    normalize_current_address(client, csrf)
+    detail_url = create_edition(client, csrf)
+    recorded_at = datetime(2026, 8, 4, 3, 30)
+    monkeypatch.setattr(admin, "utcnow", lambda: recorded_at)
+
+    detail = client.get(detail_url).text
+    assert 'name="sent_on"' not in detail
+    response = client.post(
+        f"{detail_url}/send/{sole_user_id(client)}",
+        data={
+            "csrf": csrf,
+            "normalized_address_id": normalized_address_id_from(detail),
+        },
+    )
+    assert response.status_code == 200
+
+    with Session(client.app.state.engine) as db:
+        mailpiece = db.scalars(select(Mailpiece)).one()
+        assert mailpiece.sent_at == recorded_at
+        assert mailpiece.sent_on == date(2026, 8, 3)
+    assert "<td>2026-08-03</td>" in response.text
+    raw_table = client.get("/admin?table=mailpieces").text
+    assert "2026-08-04 03:30:00" in raw_table
 
 
 def test_mailpiece_pins_current_address(client, mailer):
@@ -743,6 +773,7 @@ def test_another_users_normalized_address_is_rejected_by_route_and_database(
                 edition_id=detail_url.rsplit("/", 1)[-1],
                 user_id=ada_id,
                 normalized_address_id=graces_normalized_address,
+                sent_on=date.today(),
             )
         )
         with pytest.raises(IntegrityError):
@@ -892,6 +923,7 @@ def test_the_database_admits_one_mailpiece_per_user_per_edition(client, mailer):
                 edition_id=sent.edition_id,
                 user_id=sent.user_id,
                 normalized_address_id=sent.normalized_address_id,
+                sent_on=sent.sent_on,
             )
         )
         with pytest.raises(IntegrityError):

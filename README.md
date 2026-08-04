@@ -45,7 +45,10 @@ cp .env.example .env
 
 Copy `.env.example` to `.env` and set `SESSION_SECRET` and `ADMIN_PASSWORD` to
 strong values. Set `OPERATOR_NAME` and `OPERATOR_EMAIL` for the privacy page and
-signup notifications. `NOTIFY_EMAIL` sends those notifications elsewhere.
+signup notifications; `NOTIFY_EMAIL` sends those notifications elsewhere.
+`OPERATOR_TZ` is the operator's IANA timezone, such as `America/New_York`, and
+defaults to UTC; migrations use the same default when preserving the local
+mailing date of existing mailpieces.
 
 Set `MAIL_BACKEND=smtp` and the `SMTP_*` variables to send email through an
 SMTPS provider. The example values use Cloudflare Email Service.
@@ -99,7 +102,9 @@ awaiting a print version: Approve
 files the address as entered, and Normalize opens a form to edit it first. To
 send lists users whose current address has a print version, with a CSV
 export for labels. Marking an item sent records the print version on the
-envelope; the account page keeps showing what the user entered.
+envelope and the local mailing date; the account page keeps showing what the
+user entered. The date is derived from the UTC audit timestamp in
+`OPERATOR_TZ`.
 
 The edition page also derives a collapsed list of later signups who have not
 received that edition. Any selection of reviewed addresses can be exported to
@@ -135,7 +140,9 @@ or records the chosen users as rows when the edition is created.
   `deleted_at` set archives it from operational routes while the raw admin
   table keeps the row visible.
 - **mailpieces** — one physical piece of mail: an edition sent to one user,
-  pinned to the normalized row printed on the envelope.
+  pinned to the normalized row printed on the envelope. `sent_at` is the UTC
+  audit timestamp for the click; `sent_on` is the durable operator-local
+  mailing date.
 
 ### Invariants
 
