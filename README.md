@@ -13,6 +13,7 @@ uv, and ruff.
 ```sh
 git clone <this repo> && cd bokehbowl
 uv sync
+export OPERATOR_TZ=UTC
 uv run alembic upgrade head
 SESSION_SECRET=dev ADMIN_PASSWORD=admin COOKIE_SECURE=false uv run uvicorn main:app --reload
 ```
@@ -47,8 +48,8 @@ Copy `.env.example` to `.env` and set `SESSION_SECRET` and `ADMIN_PASSWORD` to
 strong values. Set `OPERATOR_NAME` and `OPERATOR_EMAIL` for the privacy page and
 signup notifications; `NOTIFY_EMAIL` sends those notifications elsewhere.
 `OPERATOR_TZ` is the operator's IANA timezone, such as `America/New_York`, and
-defaults to UTC; migrations use the same default when preserving the local
-mailing date of existing mailpieces.
+defaults to UTC in the application. Database migrations require it explicitly
+so existing mailpieces are never backfilled using an assumed timezone.
 
 Set `MAIL_BACKEND=smtp` and the `SMTP_*` variables to send email through an
 SMTPS provider. The example values use Cloudflare Email Service.

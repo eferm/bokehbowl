@@ -316,21 +316,11 @@ def test_head_backfills_the_operator_local_sent_date(base_database):
     assert mailpieces["mp-grace"]["sent_on"] == "2026-01-03"
 
 
-def test_head_defaults_the_backfill_timezone_to_utc(base_database, monkeypatch):
-    config, engine = base_database
+def test_head_requires_a_backfill_timezone(base_database, monkeypatch):
+    config, _ = base_database
     monkeypatch.delenv("OPERATOR_TZ")
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                "UPDATE mailpieces SET sent_at = '2026-01-03 02:00:00.000000'"
-                " WHERE id = 'mp-ada'"
-            )
-        )
-
-    command.upgrade(config, "head")
-
-    mailpieces = by_id(engine, "SELECT * FROM mailpieces")
-    assert mailpieces["mp-ada"]["sent_on"] == "2026-01-03"
+    with pytest.raises(KeyError, match="OPERATOR_TZ"):
+        command.upgrade(config, "head")
 
 
 def test_head_moves_derived_rows_into_normalized_addresses(base_database):

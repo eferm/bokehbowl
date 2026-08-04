@@ -25,7 +25,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    timezone = ZoneInfo(os.environ.get("OPERATOR_TZ", "UTC"))
+    timezone = ZoneInfo(os.environ["OPERATOR_TZ"])
+    # Existing rows need values before SQLite can enforce NOT NULL.
     op.add_column("mailpieces", sa.Column("sent_on", sa.Date(), nullable=True))
 
     mailpieces = sa.table(
