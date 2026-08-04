@@ -153,6 +153,40 @@ a {
   font-size: 0.85em;
 }
 
+.admin .mailing-table {
+  min-width: 52rem;
+  table-layout: fixed;
+}
+
+.mailing-column--name {
+  width: 18%;
+}
+
+.mailing-column--address {
+  width: 32%;
+}
+
+.mailing-column--detail {
+  width: 16%;
+}
+
+.mailing-column--normalize {
+  width: 11%;
+}
+
+.mailing-column--primary-action {
+  width: 11%;
+}
+
+.mailing-column--secondary-action {
+  width: 11%;
+}
+
+.mailing-table th,
+.mailing-table td {
+  overflow-wrap: anywhere;
+}
+
 .admin th,
 .admin td {
   padding: 0.375rem;
@@ -179,6 +213,14 @@ a {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+}
+
+.table-selection {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  min-height: 2rem;
+  white-space: nowrap;
 }
 
 .admin td button,

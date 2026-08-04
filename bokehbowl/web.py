@@ -30,9 +30,6 @@ from bokehbowl.db import (
     AddressComponents,
     User,
     UserSession,
-    current_address,
-    record_address,
-    register_user,
     utcnow,
 )
 from bokehbowl.mailer import Mailer
@@ -51,9 +48,10 @@ class LoginRequired(Exception):
 
 
 def get_db(request: Request) -> Iterator[Session]:
+    """One transaction per handler, committed before its response is sent."""
     with Session(request.app.state.engine) as db:
-        yield db
-        db.commit()
+        with db.begin():
+            yield db
 
 
 def get_templates(request: Request) -> Jinja2Templates:
@@ -64,7 +62,7 @@ def get_mailer(request: Request) -> Mailer:
     return request.app.state.mailer
 
 
-Db = Annotated[Session, Depends(get_db)]
+Db = Annotated[Session, Depends(get_db, scope="function")]
 Templates = Annotated[Jinja2Templates, Depends(get_templates)]
 Mail = Annotated[Mailer, Depends(get_mailer)]
 
@@ -275,13 +273,9 @@ def start_session(
     db.execute(
         delete(UserSession).where(UserSession.created_at < now - USER_SESSION_TTL)
     )
-    session = UserSession(
-        user_id=user.id,
-        token=secrets.token_urlsafe(32),
-    )
-    db.add(session)
+    session = UserSession(token=secrets.token_urlsafe(32))
+    user.sessions.append(session)
     request.session["user_token"] = session.token
-    db.commit()
     return RedirectResponse(destination, status_code=303)
 
 
@@ -310,7 +304,8 @@ def signup_verify(
     user = db.scalar(select(User).where(User.email == form.email))
     if user is not None:
         return start_session(request, db, user, now, destination="/account?existing=1")
-    user = register_user(db, form.email, form.components)
+    user = User.register(form.email, form.components)
+    db.add(user)
     background.add_task(
         mailer.send,
         to=request.app.state.config.notify_email,
@@ -353,7 +348,7 @@ def account(request: Request, db: Db, templates: Templates, user: CurrentUser):
         "account.html",
         {
             "user": user,
-            "address": current_address(db, user),
+            "address": user.current_address,
             "created": request.query_params.get("created") == "1",
             "existing": request.query_params.get("existing") == "1",
             "saved": "saved" in request.query_params,
@@ -364,24 +359,22 @@ def account(request: Request, db: Db, templates: Templates, user: CurrentUser):
 
 @router.post("/account")
 def update_account(
-    request: Request,
-    db: Db,
     user: CurrentUser,
     form: Annotated[AddressForm, Form()],
 ):
-    record_address(db, user, form.components)
+    user.record_address(form.components)
     return RedirectResponse("/account?saved=1", status_code=303)
 
 
 @router.post("/account/unsubscribe")
 def unsubscribe(user: CurrentUser):
-    user.unsubscribed_at = utcnow()
+    user.unsubscribe(utcnow())
     return RedirectResponse("/account", status_code=303)
 
 
 @router.post("/account/resubscribe")
-def resubscribe(request: Request, db: Db, user: CurrentUser):
-    user.unsubscribed_at = None
+def resubscribe(user: CurrentUser):
+    user.resubscribe()
     return RedirectResponse("/account", status_code=303)
 
 

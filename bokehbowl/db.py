@@ -1,22 +1,24 @@
 """Database models. SQLite dialect only."""
 
-from dataclasses import asdict, dataclass, fields
-from datetime import UTC, datetime
+import hashlib
+import secrets
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
+from typing import ClassVar, Self
 from uuid6 import uuid7
 
 from sqlalchemy import (
     Engine,
     ForeignKey,
+    ForeignKeyConstraint,
     String,
     UniqueConstraint,
     create_engine,
     event,
-    select,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
-    Session,
     mapped_column,
     relationship,
 )
@@ -50,10 +52,6 @@ class AddressComponents:
     country: str
 
 
-ADDRESS_FIELDS = tuple(field.name for field in fields(AddressComponents))
-"""The address column names, in declaration order."""
-
-
 class AddressMixin:
     """The components of a postal address. Each table that stores one inherits
     these columns, so the shape is identical everywhere."""
@@ -65,6 +63,11 @@ class AddressMixin:
     region: Mapped[str | None] = mapped_column(String(120))
     postal_code: Mapped[str] = mapped_column(String(20))
     country: Mapped[str] = mapped_column(String(120))
+
+    @classmethod
+    def from_components(cls, components: AddressComponents) -> Self:
+        """Construct an address row from its shared component value."""
+        return cls(**asdict(components))
 
     @property
     def components(self) -> AddressComponents:
@@ -91,11 +94,46 @@ class User(Base):
     unsubscribed_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
-    addresses: Mapped[list["Address"]] = relationship(back_populates="user")
+    addresses: Mapped[list["Address"]] = relationship(
+        back_populates="user",
+        order_by=lambda: (Address.created_at, Address.id),
+    )
     sessions: Mapped[list["UserSession"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
     mailpieces: Mapped[list["Mailpiece"]] = relationship(back_populates="user")
+
+    @classmethod
+    def register(cls, email: str, submitted: AddressComponents) -> Self:
+        """Create a user together with their required first address."""
+        return cls(
+            email=email,
+            addresses=[Address.from_components(submitted)],
+        )
+
+    def record_address(self, submitted: AddressComponents) -> None:
+        """Append an address unless the current one has the same components."""
+        if submitted != self.current_address.components:
+            self.addresses.append(Address.from_components(submitted))
+
+    def unsubscribe(self, now: datetime) -> None:
+        """Stop mail without replacing the original unsubscribe time."""
+        if self.unsubscribed_at is None:
+            self.unsubscribed_at = now
+
+    def resubscribe(self) -> None:
+        """Resume mail for this user."""
+        self.unsubscribed_at = None
+
+    @property
+    def current_address(self) -> "Address":
+        """The latest address, with creation-time ties broken by id."""
+        return self.addresses[-1]
+
+    @property
+    def current_normalized_address(self) -> "NormalizedAddress | None":
+        """The latest print version of the current address, if one exists."""
+        return self.current_address.current_normalized_address
 
 
 class UserSession(Base):
@@ -115,6 +153,9 @@ class Address(AddressMixin, Base):
     row; the latest row is current."""
 
     __tablename__ = "addresses"
+    __table_args__ = (
+        UniqueConstraint("id", "user_id", name="uq_addresses_id_user_id"),
+    )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=new_id, sort_order=-2
@@ -125,6 +166,27 @@ class Address(AddressMixin, Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow, sort_order=1)
 
     user: Mapped[User] = relationship(back_populates="addresses")
+    normalized_addresses: Mapped[list["NormalizedAddress"]] = relationship(
+        back_populates="address",
+        foreign_keys=lambda: (
+            NormalizedAddress.address_id,
+            NormalizedAddress.user_id,
+        ),
+        order_by=lambda: (NormalizedAddress.created_at, NormalizedAddress.id),
+    )
+
+    @property
+    def current_normalized_address(self) -> "NormalizedAddress | None":
+        """The latest print version filed for this address, if one exists."""
+        return self.normalized_addresses[-1] if self.normalized_addresses else None
+
+    def record_normalized_address(self, submitted: AddressComponents) -> None:
+        """Append a print version unless the current one has the same components."""
+        current = self.current_normalized_address
+        if current is None or submitted != current.components:
+            self.normalized_addresses.append(
+                NormalizedAddress.from_components(submitted)
+            )
 
 
 class NormalizedAddress(AddressMixin, Base):
@@ -133,16 +195,27 @@ class NormalizedAddress(AddressMixin, Base):
     for their address, and an address is sendable once it has one."""
 
     __tablename__ = "normalized_addresses"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ("address_id", "user_id"),
+            ("addresses.id", "addresses.user_id"),
+            name="fk_normalized_addresses_address_user",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("id", "user_id", name="uq_normalized_addresses_id_user_id"),
+    )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=new_id, sort_order=-2
     )
-    address_id: Mapped[str] = mapped_column(
-        ForeignKey("addresses.id", ondelete="CASCADE"), index=True, sort_order=-1
-    )
+    address_id: Mapped[str] = mapped_column(String(36), index=True, sort_order=-1)
+    user_id: Mapped[str] = mapped_column(String(36), sort_order=-1)
     created_at: Mapped[datetime] = mapped_column(default=utcnow, sort_order=1)
 
-    address: Mapped[Address] = relationship()
+    address: Mapped[Address] = relationship(
+        back_populates="normalized_addresses",
+        foreign_keys=(address_id, user_id),
+    )
 
 
 class Edition(Base):
@@ -158,6 +231,16 @@ class Edition(Base):
 
     mailpieces: Mapped[list["Mailpiece"]] = relationship(back_populates="edition")
 
+    @property
+    def sent_mailpieces(self) -> int:
+        """The number of physical pieces recorded for this edition."""
+        return len(self.mailpieces)
+
+    def archive(self, now: datetime) -> None:
+        """Soft-delete the edition without replacing its original archive time."""
+        if self.deleted_at is None:
+            self.deleted_at = now
+
 
 class Mailpiece(Base):
     """One physical piece of mail: an edition sent to one user.
@@ -165,25 +248,40 @@ class Mailpiece(Base):
     of record at send time is that row's parent."""
 
     __tablename__ = "mailpieces"
-    __table_args__ = (UniqueConstraint("edition_id", "user_id"),)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ("normalized_address_id", "user_id"),
+            ("normalized_addresses.id", "normalized_addresses.user_id"),
+            name="fk_mailpieces_normalized_address_user",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("edition_id", "user_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     edition_id: Mapped[str] = mapped_column(ForeignKey("editions.id"), index=True)
     user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    normalized_address_id: Mapped[str] = mapped_column(
-        ForeignKey("normalized_addresses.id", ondelete="CASCADE")
-    )
+    normalized_address_id: Mapped[str] = mapped_column(String(36))
     sent_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     edition: Mapped[Edition] = relationship(back_populates="mailpieces")
     user: Mapped[User] = relationship(back_populates="mailpieces")
-    normalized_address: Mapped[NormalizedAddress] = relationship()
+    normalized_address: Mapped[NormalizedAddress] = relationship(
+        foreign_keys=(normalized_address_id,)
+    )
+
+    @property
+    def mailing_group(self) -> str:
+        """The edition group this recipient belongs to, derived from signup time."""
+        return "base" if self.user.created_at <= self.edition.created_at else "late"
 
 
 class LoginCode(Base):
     __tablename__ = "login_codes"
+
+    TTL: ClassVar[timedelta] = timedelta(minutes=10)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     email: Mapped[str] = mapped_column(String(254), index=True)
@@ -191,7 +289,27 @@ class LoginCode(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     expires_at: Mapped[datetime]
     consumed_at: Mapped[datetime | None]
-    attempts: Mapped[int] = mapped_column(default=0)
+
+    @staticmethod
+    def hash(email: str, code: str) -> str:
+        return hashlib.sha256(f"{email}:{code}".encode()).hexdigest()
+
+    @classmethod
+    def issue(cls, email: str, now: datetime) -> tuple[Self, str]:
+        """Create a stored code and return it together with its plaintext value."""
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        return (
+            cls(
+                email=email,
+                code_hash=cls.hash(email, code),
+                created_at=now,
+                expires_at=now + cls.TTL,
+            ),
+            code,
+        )
+
+    def matches(self, code: str) -> bool:
+        return secrets.compare_digest(self.code_hash, self.hash(self.email, code))
 
 
 class AdminSession(Base):
@@ -201,57 +319,6 @@ class AdminSession(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
-
-
-def current_address(db: Session, user: User) -> Address:
-    """The user's latest address, created_at ties broken on id. Every user has
-    one: registration records it."""
-    return db.scalars(
-        select(Address)
-        .where(Address.user_id == user.id)
-        .order_by(Address.created_at.desc(), Address.id.desc())
-        .limit(1)
-    ).one()
-
-
-def latest_normalized_address(
-    db: Session, address: Address
-) -> NormalizedAddress | None:
-    """The address's current print version, once the operator has filed one.
-    An address with a print version is ready to send; envelopes print it."""
-    return db.scalars(
-        select(NormalizedAddress)
-        .where(NormalizedAddress.address_id == address.id)
-        .order_by(NormalizedAddress.created_at.desc(), NormalizedAddress.id.desc())
-        .limit(1)
-    ).first()
-
-
-def record_address(db: Session, user: User, submitted: AddressComponents) -> None:
-    """Append an address unless the user's latest address is identical."""
-    if submitted == current_address(db, user).components:
-        return
-    db.add(Address(user_id=user.id, **asdict(submitted)))
-
-
-def record_normalized_address(
-    db: Session, address: Address, submitted: AddressComponents
-) -> None:
-    """Append a print version of the address unless its latest print version is
-    identical."""
-    current = latest_normalized_address(db, address)
-    if current is not None and submitted == current.components:
-        return
-    db.add(NormalizedAddress(address_id=address.id, **asdict(submitted)))
-
-
-def register_user(db: Session, email: str, submitted: AddressComponents) -> User:
-    """Create a user and their first address, in one transaction."""
-    user = User(email=email)
-    db.add(user)
-    db.flush()
-    db.add(Address(user_id=user.id, **asdict(submitted)))
-    return user
 
 
 def enable_foreign_keys(dbapi_connection: object, _record: object) -> None:
