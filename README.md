@@ -13,7 +13,6 @@ uv, and ruff.
 ```sh
 git clone <this repo> && cd bokehbowl
 uv sync
-export OPERATOR_TZ=UTC
 uv run alembic upgrade head
 SESSION_SECRET=dev ADMIN_PASSWORD=admin COOKIE_SECURE=false uv run uvicorn main:app --reload
 ```
