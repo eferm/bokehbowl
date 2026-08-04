@@ -46,9 +46,7 @@ cp .env.example .env
 Copy `.env.example` to `.env` and set `SESSION_SECRET` and `ADMIN_PASSWORD` to
 strong values. Set `OPERATOR_NAME` and `OPERATOR_EMAIL` for the privacy page and
 signup notifications; `NOTIFY_EMAIL` sends those notifications elsewhere.
-`OPERATOR_TZ` is the operator's IANA timezone, such as `America/New_York`, and
-defaults to UTC in the application. Database migrations require it explicitly
-so existing mailpieces are never backfilled using an assumed timezone.
+`OPERATOR_TZ` is the operator's IANA timezone, such as `America/New_York`.
 
 Set `MAIL_BACKEND=smtp` and the `SMTP_*` variables to send email through an
 SMTPS provider. The example values use Cloudflare Email Service.
