@@ -40,23 +40,24 @@ class InstanceStaticFiles(StaticFiles):
         return self.lookup_path(path)[1] is not None
 
 
-def template_context(request: Request) -> dict[str, str | int | bool]:
-    """Expose request-specific values to every rendered template."""
-    with Session(request.app.state.engine) as db:
-        signed_in = live_session(db, request) is not None
-    return {
-        "csrf": csrf_token(request),
-        "current_year": date.today().year,
-        "signed_in": signed_in,
-    }
-
-
 def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.config = config
     app.state.engine = engine
     app.state.mailer = mailer
     static = InstanceStaticFiles()
+
+    def template_context(request: Request) -> dict[str, str | int | bool]:
+        """Expose request-specific values to every rendered template."""
+        with Session(engine) as db:
+            signed_in = live_session(db, request) is not None
+        return {
+            "csrf": csrf_token(request),
+            "current_year": date.today().year,
+            "signed_in": signed_in,
+            "has_backdrop": static.has("background.webp"),
+        }
+
     templates = Jinja2Templates(
         directory=[INSTANCE_TEMPLATES_DIR, TEMPLATES_DIR],
         context_processors=[template_context],
@@ -65,7 +66,6 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
         operator_name=config.operator_name,
         operator_email=config.operator_email,
         app_commit=config.commit,
-        has_backdrop=static.has("background.webp"),
         countries=COUNTRIES,
     )
     app.state.templates = templates
