@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -37,6 +38,10 @@ class AppConfig:
     operator_tz: ZoneInfo
     notify_email: str
     commit: str | None
+
+    def operator_date(self, timestamp: datetime) -> date:
+        """The operator-local date containing a stored UTC timestamp."""
+        return timestamp.replace(tzinfo=UTC).astimezone(self.operator_tz).date()
 
 
 def load_smtp_mail() -> SmtpMail:
@@ -84,7 +89,7 @@ def load_config() -> AppConfig:
         mail=MAIL_BACKENDS[os.environ.get("MAIL_BACKEND", "console")](),
         operator_name=os.environ.get("OPERATOR_NAME", "the operator of this instance"),
         operator_email=operator_email,
-        operator_tz=ZoneInfo(os.environ.get("OPERATOR_TZ", "UTC")),
+        operator_tz=ZoneInfo(os.environ.get("OPERATOR_TZ", "America/New_York")),
         notify_email=os.environ.get("NOTIFY_EMAIL") or operator_email,
         commit=os.environ.get("GIT_COMMIT") or read_git_commit(),
     )

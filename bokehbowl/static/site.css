@@ -154,32 +154,24 @@ a {
 }
 
 .admin .mailing-table {
-  min-width: 52rem;
+  min-width: 44rem;
   table-layout: fixed;
 }
 
-.mailing-column--name {
-  width: 18%;
+.mailing-column--recipient {
+  width: 24%;
 }
 
 .mailing-column--address {
-  width: 32%;
+  width: 38%;
 }
 
-.mailing-column--detail {
-  width: 16%;
+.mailing-column--status {
+  width: 18%;
 }
 
-.mailing-column--normalize {
-  width: 11%;
-}
-
-.mailing-column--primary-action {
-  width: 11%;
-}
-
-.mailing-column--secondary-action {
-  width: 11%;
+.mailing-column--action {
+  width: 20%;
 }
 
 .mailing-table th,
@@ -211,8 +203,16 @@ a {
 
 .table-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
+}
+
+.edition-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-block: 1.5rem;
 }
 
 .table-selection {
@@ -225,7 +225,7 @@ a {
 
 .admin td button,
 .admin td .button-link {
-  min-height: 2rem;
+  min-height: 2.5rem;
   padding: 0.45rem 0.7rem;
 }
 
@@ -547,7 +547,8 @@ button:focus-visible,
 }
 
 .form-notice,
-.form-error {
+.form-error,
+.account-warning {
   display: flex;
   align-items: center;
   min-height: 2.9rem;
@@ -568,8 +569,15 @@ button:focus-visible,
   border-left-color: #b04a3a;
 }
 
+.account-warning {
+  display: grid;
+  gap: 0.35rem;
+  border-left-color: #b04a3a;
+}
+
 .photo-theme .form-notice,
-.photo-theme .form-error {
+.photo-theme .form-error,
+.photo-theme .account-warning {
   background: rgb(0 0 0 / 18%);
 }
 

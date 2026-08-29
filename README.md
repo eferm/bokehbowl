@@ -13,6 +13,7 @@ uv, and ruff.
 ```sh
 git clone <this repo> && cd bokehbowl
 uv sync
+mkdir -p data
 uv run alembic upgrade head
 SESSION_SECRET=dev ADMIN_PASSWORD=admin COOKIE_SECURE=false uv run uvicorn main:app --reload
 ```
@@ -92,41 +93,23 @@ the account was already there; the account page is where addresses change.
 
 ### Create an edition
 
-At `/admin`, create an edition. Its original bulk list contains the subscribed
-users who signed up by the time it was created; later signups wait for the next
-one by default.
-The edition page splits them into two groups. Needs review lists addresses
-awaiting a print version: Approve
-files the address as entered, and Normalize opens a form to edit it first. To
-send lists users whose current address has a print version, with a CSV
-export for labels. Marking an item sent records the print version on the
-envelope and the local mailing date; the account page keeps showing what the
-user entered.
+At `/admin`, create an edition. It gets one mailpiece draft for every currently
+subscribed user. Add or remove drafts on the edition page, normalize addresses
+marked Needs review, export the Ready addresses for labels, then mark each draft
+sent to record its print version and local mailing date.
 
-The edition page also derives a collapsed list of later signups who have not
-received that edition. Any selection of reviewed addresses can be exported to
-one CSV for catch-up envelope printing and marked sent without adding them to
-the original bulk list. This workflow stores no pending selection: users remain
-candidates until mailpieces are recorded. Unsubscribing hides a candidate,
-resubscribing reveals them again, and undoing a mailpiece returns them to the
-list.
-
-The list is computed on each view, and the two halves of it are read at
-different moments by design: the signup cutoff is fixed at the edition's
-creation, while subscription is read as it stands now. Someone who
-unsubscribes between an edition's creation and its send leaves that edition's
-list, and mailpieces already recorded stay. A subscription model that freezes
-the list at creation compares `unsubscribed_at` to the edition's `created_at`,
-or records the chosen users as rows when the edition is created.
+Marking a mailpiece returned creates a replacement draft. Another draft for the
+same user can also be added directly. A normalized address that produced
+returned mail cannot be sent again; normalize a changed address before marking
+the replacement sent. Unsubscribed users keep their drafts, but those drafts
+cannot be marked sent.
 
 ### Data model
 
 - **users** — one row per verified email identity. `created_at` is the
-  verification moment; `unsubscribed_at` set means mail stops. An edition's
-  original bulk list contains users with `unsubscribed_at` unset whose
-  `created_at` precedes the edition's. A signup's address travels in the
-  form until verification creates the user and their first address in one
-  transaction.
+  verification moment; `unsubscribed_at` set means mail stops. A signup's
+  address travels in the form until verification creates the user and their
+  first address in one transaction.
 - **addresses** — every postal address a user entered, append-only; the
   latest row is current and is what the account page shows. Countries use
   CLDR's English territory names.
@@ -136,23 +119,31 @@ or records the chosen users as rows when the edition is created.
 - **editions** — one print run (a postcard design, a photo, a letter).
   `deleted_at` set archives it from operational routes while the raw admin
   table keeps the row visible.
+- **drafts** — planned physical copies. New editions seed one draft
+  for every currently subscribed user; operators can add or remove drafts, and
+  the same user can have several.
 - **mailpieces** — one physical piece of mail: an edition sent to one user,
   pinned to the normalized row printed on the envelope. `sent_at` is the UTC
   audit timestamp for the click; `sent_on` is the durable operator-local
-  mailing date.
+  mailing date. An edition can have multiple mailpieces for the same user.
+- **returns** — one returned-mail fact per physical mailpiece, with the UTC
+  time the operator recorded its return.
 
 ### Invariants
 
 Each invariant lives at a named enforcement layer:
 
 - One user per email — `UNIQUE` on `users.email`.
-- One mailpiece per user per edition — `UNIQUE(edition_id, user_id)` on
-  `mailpieces`.
+- Each mailpiece draft has its own identity — `drafts.id` is its
+  primary key, so an edition can contain several drafts for the same user.
+- One return per physical mailpiece — `returns.mailpiece_id` is both its
+  primary key and a foreign key to `mailpieces.id`.
 - Every user has an address — registration creates the user and their
   first address in one transaction.
 - Every envelope prints an operator-approved form —
-  `mailpieces.normalized_address_id` is non-null, and the mark-sent handler
-  requires a normalized row belonging to the user before writing.
+  `mailpieces.normalized_address_id` is non-null, and marking a draft sent
+  requires the user's current normalized row without a recorded return before
+  writing.
 - A normalized address prints only while its raw address is the user's
   latest — each normalized row is pinned to one address row by `address_id`.
 - Login codes are single-use — consuming a code marks it as consumed.
@@ -170,7 +161,7 @@ The app reads one country name per line from
 checksum in `vendor/manifest.json`. Regenerate the runtime data with:
 
 ```sh
-python scripts/parse_cldr_countries.py
+uv run scripts/parse_cldr_countries.py
 ```
 
 ```sh

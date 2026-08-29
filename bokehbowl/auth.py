@@ -23,7 +23,7 @@ def consume_login_code(db: Session, email: str, code: str, now: datetime) -> boo
         return False
     if not current.matches(code):
         return False
-    consumed = db.execute(
+    consumed = db.connection().execute(
         update(LoginCode)
         .where(LoginCode.id == current.id, LoginCode.consumed_at.is_(None))
         .values(consumed_at=now)

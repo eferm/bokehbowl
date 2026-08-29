@@ -4,9 +4,9 @@
 {% block content %}
 <p><a href="/admin?table=users">&larr; cancel</a></p>
 <h1>Unsubscribe {{ user.email }}?</h1>
-<p>This user will stop receiving future editions and will be signed out of their current sessions. Their account and mailing history will be preserved.</p>
+<p>This user will stop receiving future editions. Their existing sessions will remain active, and their account and mailing history will be preserved.</p>
 <form method="post" action="/admin/users/{{ user.id }}/unsubscribe">
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  <button type="submit">Confirm unsubscribe</button>
+  <button type="submit">Confirm Unsubscribe</button>
 </form>
 {% endblock %}

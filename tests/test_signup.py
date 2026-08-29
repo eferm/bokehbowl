@@ -36,9 +36,9 @@ def test_signed_in_home_replaces_signup_with_account_link(client, mailer):
     sign_up_and_verify(client, mailer)
     page = client.get("/").text
     assert "You’re already on the list" in page
-    assert '<a class="button-link" href="/account">View account</a>' in page
+    assert '<a class="button-link" href="/account">View Account</a>' in page
     assert 'action="/signup"' not in page
-    assert "Join the list" not in page
+    assert "Join the List" not in page
 
 
 def test_signed_in_browser_cannot_start_another_signup(client, mailer):
@@ -89,7 +89,7 @@ def test_first_signup_shows_confirmation(client, mailer):
 
 def test_authenticated_header_offers_sign_out(client, mailer):
     sign_up_and_verify(client, mailer)
-    assert "Sign out" in client.get("/").text
+    assert "Sign Out" in client.get("/").text
 
 
 def test_header_offers_sign_out_while_the_session_row_lives(client, mailer):
@@ -100,7 +100,7 @@ def test_header_offers_sign_out_while_the_session_row_lives(client, mailer):
         db.execute(delete(UserSession))
         db.commit()
 
-    assert "Sign out" not in client.get("/").text
+    assert "Sign Out" not in client.get("/").text
     assert client.get("/account", follow_redirects=False).status_code == 303
 
 
@@ -114,7 +114,7 @@ def test_header_offers_sign_out_while_the_session_is_young(client, mailer):
         )
         db.commit()
 
-    assert "Sign out" not in client.get("/").text
+    assert "Sign Out" not in client.get("/").text
     assert client.get("/account", follow_redirects=False).status_code == 303
 
 
@@ -168,11 +168,11 @@ def test_invalid_operator_tz_is_rejected(monkeypatch):
         load_config()
 
 
-def test_operator_tz_defaults_to_utc(monkeypatch):
+def test_operator_tz_defaults_to_new_york(monkeypatch):
     monkeypatch.setenv("SESSION_SECRET", "secret")
     monkeypatch.setenv("ADMIN_PASSWORD", "password")
     monkeypatch.delenv("OPERATOR_TZ", raising=False)
-    assert load_config().operator_tz.key == "UTC"
+    assert load_config().operator_tz.key == "America/New_York"
 
 
 def test_email_is_normalized_and_not_duplicated(client, mailer):
@@ -411,7 +411,7 @@ def test_stale_cookie_cannot_log_out_new_session(client, mailer):
     client.cookies = stale
     replay = client.post("/logout", data={"csrf": csrf}, follow_redirects=False)
     assert replay.headers["location"] == "/"
-    assert "Sign out" not in client.get("/").text
+    assert "Sign Out" not in client.get("/").text
     client.cookies = fresh
     assert client.get("/account").status_code == 200
 
