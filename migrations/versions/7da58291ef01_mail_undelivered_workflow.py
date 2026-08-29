@@ -98,6 +98,23 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    duplicate_mailpieces = list(
+        op.get_bind().execute(
+            sa.text(
+                "SELECT edition_id, user_id FROM mailpieces"
+                " GROUP BY edition_id, user_id HAVING COUNT(*) > 1"
+            )
+        )
+    )
+    if duplicate_mailpieces:
+        pairs = ", ".join(
+            f"{row.edition_id}/{row.user_id}" for row in duplicate_mailpieces
+        )
+        raise RuntimeError(
+            f"Multiple mailpieces for edition/user pairs: {pairs}. "
+            "Delete all but one mailpiece in each pair, then run the downgrade again."
+        )
+
     op.drop_index(
         op.f("ix_drafts_user_id"),
         table_name="drafts",
