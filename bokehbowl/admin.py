@@ -3,12 +3,11 @@
 import csv
 import io
 import secrets
-from collections.abc import Iterable
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Self
+from typing import Annotated, ClassVar, Literal, Self, override
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
@@ -21,9 +20,10 @@ from bokehbowl.db import (
     Base,
     Edition,
     Mailpiece,
+    MailpieceDraft,
+    MailReturn,
     NormalizedAddress,
     User,
-    UserSession,
     utcnow,
 )
 from bokehbowl.web import AddressForm, Db, Templates
@@ -58,11 +58,10 @@ TABLES: dict[str, TableView] = {
         ("current_address", "current_normalized_address"),
     ),
     "addresses": TableView(Address, Address.created_at),
-    "normalized_addresses": TableView(
-        NormalizedAddress, NormalizedAddress.created_at
-    ),
+    "normalized_addresses": TableView(NormalizedAddress, NormalizedAddress.created_at),
     "editions": TableView(Edition, Edition.created_at, ("sent_mailpieces",)),
-    "mailpieces": TableView(Mailpiece, Mailpiece.sent_at, ("mailing_group",)),
+    "mailpieces": TableView(Mailpiece, Mailpiece.sent_at),
+    "returns": TableView(MailReturn, MailReturn.received_at),
 }
 
 
@@ -129,6 +128,23 @@ def require_mailpiece(_: AdminOnly, db: Db, mailpiece_id: str) -> Mailpiece:
     return mailpiece
 
 
+def require_mailpiece_draft(
+    _: AdminOnly,
+    db: Db,
+    edition_id: str,
+    draft_id: str,
+) -> MailpieceDraft:
+    draft = db.scalar(
+        select(MailpieceDraft).where(
+            MailpieceDraft.id == draft_id,
+            MailpieceDraft.edition_id == edition_id,
+        )
+    )
+    if draft is None:
+        raise HTTPException(status_code=404)
+    return draft
+
+
 def require_address(_: AdminOnly, db: Db, address_id: str) -> Address:
     address = db.get(Address, address_id)
     if address is None:
@@ -139,6 +155,9 @@ def require_address(_: AdminOnly, db: Db, address_id: str) -> Address:
 UserById = Annotated[User, Depends(require_user)]
 EditionById = Annotated[Edition, Depends(require_edition)]
 MailpieceById = Annotated[Mailpiece, Depends(require_mailpiece)]
+MailpieceDraftByEdition = Annotated[
+    MailpieceDraft, Depends(require_mailpiece_draft)
+]
 AddressById = Annotated[Address, Depends(require_address)]
 
 
@@ -157,9 +176,7 @@ def table_data(
         *(column.key for column in view.model.__table__.columns),
         *view.derived_properties,
     ]
-    records = list(
-        db.scalars(select(view.model).order_by(view.timestamp.desc()))
-    )
+    records = list(db.scalars(select(view.model).order_by(view.timestamp.desc())))
     return columns, [[getattr(row, column) for column in columns] for row in records]
 
 
@@ -242,9 +259,8 @@ def confirm_unsubscribe(request: Request, templates: Templates, user: UserById):
 
 
 @router.post("/users/{user_id}/unsubscribe")
-def unsubscribe(db: Db, user: UserById):
+def unsubscribe(user: UserById):
     user.unsubscribe(utcnow())
-    db.execute(delete(UserSession).where(UserSession.user_id == user.id))
     return RedirectResponse("/admin", status_code=303)
 
 
@@ -262,88 +278,134 @@ def export(db: Db, _: AdminOnly, table: str = "users"):
 
 
 @dataclass(frozen=True)
-class ReviewRecipient:
-    """A user whose current address awaits a print version."""
-
-    user: User
-    address: Address
-
-
-@dataclass(frozen=True)
-class ReadyRecipient:
-    """A user whose current address has a print version, which an envelope to
-    them prints."""
-
-    user: User
-    address: Address
-    normalized_address: NormalizedAddress
-
-
-@dataclass(frozen=True)
-class RecipientGroup:
-    """Unsent recipients grouped by whether their current address is ready to
-    print."""
-
-    review: list[ReviewRecipient]
-    ready: list[ReadyRecipient]
+class MailpieceDraftRow:
+    draft: MailpieceDraft
 
     @property
-    def count(self) -> int:
-        return len(self.review) + len(self.ready)
+    def user(self) -> User:
+        return self.draft.user
 
-    @classmethod
-    def from_users(cls, users: Iterable[User]) -> Self:
-        review: list[ReviewRecipient] = []
-        ready: list[ReadyRecipient] = []
-        for user in users:
-            address = user.current_address
-            normalized_address = user.current_normalized_address
-            if normalized_address is None:
-                review.append(ReviewRecipient(user, address))
-            else:
-                ready.append(ReadyRecipient(user, address, normalized_address))
-        return cls(review, ready)
+    @property
+    def address(self) -> Address:
+        return self.user.current_address
+
+    @property
+    def mailing_address(self) -> Address | NormalizedAddress:
+        return self.address
 
 
 @dataclass(frozen=True)
-class EditionMailingView:
-    """The complete derived mailing workflow for one edition."""
+class ReviewMailpieceDraftRow(MailpieceDraftRow):
+    kind: ClassVar[Literal["review"]] = "review"
 
-    base: RecipientGroup
-    late: RecipientGroup
-    sent: list[Mailpiece]
+
+@dataclass(frozen=True)
+class ReadyMailpieceDraftRow(MailpieceDraftRow):
+    """A draft whose current address has a printable version."""
+
+    normalized_address: NormalizedAddress
+    kind: ClassVar[Literal["ready"]] = "ready"
+
+    @property
+    @override
+    def mailing_address(self) -> NormalizedAddress:
+        return self.normalized_address
+
+
+@dataclass(frozen=True)
+class UnsubscribedMailpieceDraftRow(MailpieceDraftRow):
+    kind: ClassVar[Literal["unsubscribed"]] = "unsubscribed"
+
+
+DraftMailpieceRow = (
+    ReviewMailpieceDraftRow
+    | ReadyMailpieceDraftRow
+    | UnsubscribedMailpieceDraftRow
+)
+
+
+def mailpiece_draft_row(draft: MailpieceDraft) -> DraftMailpieceRow:
+    user = draft.user
+    normalized_address = user.sendable_normalized_address
+    if user.unsubscribed_at is not None:
+        return UnsubscribedMailpieceDraftRow(draft)
+    if normalized_address is None:
+        return ReviewMailpieceDraftRow(draft)
+    return ReadyMailpieceDraftRow(draft, normalized_address)
+
+
+@dataclass(frozen=True)
+class MailpieceRow:
+    mailpiece: Mailpiece
+
+    @property
+    def user(self) -> User:
+        return self.mailpiece.user
+
+    @property
+    def mailing_address(self) -> NormalizedAddress:
+        return self.mailpiece.normalized_address
+
+
+@dataclass(frozen=True)
+class SentMailpieceRow(MailpieceRow):
+    kind: ClassVar[Literal["sent"]] = "sent"
+
+
+@dataclass(frozen=True)
+class ReturnedMailpieceRow(MailpieceRow):
+    kind: ClassVar[Literal["returned"]] = "returned"
+
+
+def mailpiece_row(mailpiece: Mailpiece) -> SentMailpieceRow | ReturnedMailpieceRow:
+    if mailpiece.mail_return is None:
+        return SentMailpieceRow(mailpiece)
+    return ReturnedMailpieceRow(mailpiece)
+
+
+EditionMailingRow = DraftMailpieceRow | SentMailpieceRow | ReturnedMailpieceRow
+
+
+@dataclass(frozen=True)
+class EditionMailpiecesView:
+    """An edition's drafts and recorded physical mailpieces."""
+
+    rows: list[EditionMailingRow]
+
+    @property
+    def edition_user_ids(self) -> set[str]:
+        return {row.user.id for row in self.rows}
+
+    @property
+    def ready_drafts(self) -> list[ReadyMailpieceDraftRow]:
+        return [row for row in self.rows if isinstance(row, ReadyMailpieceDraftRow)]
 
     @classmethod
     def from_edition(cls, db: Session, edition: Edition) -> Self:
-        """Build the edition's base, late-signup, and sent recipient groups.
-
-        Subscription is live, the original/catch-up boundary is the edition's
-        creation time, and recorded mailpieces are historical regardless of
-        current subscription.
-        """
-        sent = list(
+        drafts = list(
+            db.scalars(
+                select(MailpieceDraft)
+                .join(User)
+                .where(MailpieceDraft.edition_id == edition.id)
+                .order_by(User.created_at, User.id, MailpieceDraft.id)
+            )
+        )
+        mailpieces = list(
             db.scalars(
                 select(Mailpiece)
                 .where(Mailpiece.edition_id == edition.id)
                 .order_by(Mailpiece.sent_at.desc())
             )
         )
-        unsent = [
-            user
-            for user in db.scalars(
-                select(User)
-                .where(User.unsubscribed_at.is_(None))
-                .order_by(User.created_at)
-            )
-            if user.id not in {mailpiece.user_id for mailpiece in sent}
-        ]
-        base_users = [user for user in unsent if user.created_at <= edition.created_at]
-        late_users = [user for user in unsent if user.created_at > edition.created_at]
-        return cls(
-            base=RecipientGroup.from_users(base_users),
-            late=RecipientGroup.from_users(reversed(late_users)),
-            sent=sent,
+        rows: list[EditionMailingRow] = sorted(
+            [
+                *(mailpiece_draft_row(draft) for draft in drafts),
+                *(mailpiece_row(mailpiece) for mailpiece in mailpieces),
+            ],
+            key=lambda row: (row.user.created_at, row.user.id),
+            reverse=True,
         )
+        return cls(rows=rows)
 
 
 @router.post("/editions")
@@ -352,7 +414,17 @@ def create_edition(
     _: AdminOnly,
     title: Annotated[str, Form()],
 ):
-    edition = Edition(title=title.strip())
+    edition = Edition(
+        title=title.strip(),
+        drafts=[
+            MailpieceDraft(user=user)
+            for user in db.scalars(
+                select(User)
+                .where(User.unsubscribed_at.is_(None))
+                .order_by(User.created_at)
+            )
+        ],
+    )
     db.add(edition)
     # The generated id is needed in the redirect URL before the response.
     db.flush()
@@ -378,90 +450,100 @@ def delete_edition(edition: EditionById):
 
 @router.get("/editions/{edition_id}")
 def edition_detail(
-    request: Request, db: Db, templates: Templates, edition: EditionById
+    request: Request,
+    db: Db,
+    templates: Templates,
+    edition: EditionById,
 ):
     return templates.TemplateResponse(
         request,
         "edition.html",
         {
             "edition": edition,
-            "mailing": EditionMailingView.from_edition(db, edition),
+            "mailing": EditionMailpiecesView.from_edition(db, edition),
+            "draft_candidates": list(
+                db.scalars(
+                    select(User)
+                    .where(User.unsubscribed_at.is_(None))
+                    .order_by(User.created_at.desc(), User.id.desc())
+                )
+            ),
         },
     )
 
 
-@router.post("/editions/{edition_id}/send/{user_id}")
+@router.post("/editions/{edition_id}/drafts")
+def create_mailpiece_draft(
+    db: Db,
+    edition: EditionById,
+    user_id: Annotated[str, Form()],
+):
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404)
+    if user.unsubscribed_at is not None:
+        raise HTTPException(status_code=409)
+    db.add(MailpieceDraft(edition=edition, user=user))
+    return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)
+
+
+@router.post("/editions/{edition_id}/drafts/{draft_id}/remove")
+def remove_mailpiece_draft(
+    db: Db,
+    edition: EditionById,
+    draft: MailpieceDraftByEdition,
+):
+    db.delete(draft)
+    return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)
+
+
+@router.post("/editions/{edition_id}/drafts/{draft_id}/mark-sent")
 def mark_sent(
     request: Request,
     db: Db,
     edition: EditionById,
-    user: UserById,
-    normalized_address_id: Annotated[str, Form()],
+    draft: MailpieceDraftByEdition,
 ):
-    # The bulk list has a creation-time cutoff, but this route also serves an
-    # operator's explicit catch-up send. A live subscription is the shared
-    # eligibility rule for both paths.
+    user = draft.user
     if user.unsubscribed_at is not None:
         raise HTTPException(status_code=409)
-    normalized = db.get(NormalizedAddress, normalized_address_id)
-    if normalized is None or normalized.address.user_id != user.id:
-        raise HTTPException(status_code=404)
+    normalized = user.sendable_normalized_address
+    if normalized is None:
+        raise HTTPException(status_code=409)
     now = utcnow()
     sent_on = (
-        now.replace(tzinfo=UTC)
-        .astimezone(request.app.state.config.operator_tz)
-        .date()
+        now.replace(tzinfo=UTC).astimezone(request.app.state.config.operator_tz).date()
     )
-    already_sent = db.scalar(
-        select(Mailpiece.id).where(
-            Mailpiece.edition_id == edition.id,
-            Mailpiece.user_id == user.id,
+    db.add(
+        Mailpiece(
+            edition=edition,
+            user=user,
+            normalized_address=normalized,
+            sent_at=now,
+            sent_on=sent_on,
         )
     )
-    if already_sent is None:
-        db.add(
-            Mailpiece(
-                edition=edition,
-                user=user,
-                normalized_address=normalized,
-                sent_at=now,
-                sent_on=sent_on,
-            )
-        )
+    db.delete(draft)
     return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)
 
 
-@router.post("/mailpieces/{mailpiece_id}/delete")
-def delete_mailpiece(db: Db, mailpiece: MailpieceById):
-    edition_id = mailpiece.edition_id
-    db.delete(mailpiece)
-    return RedirectResponse(f"/admin/editions/{edition_id}", status_code=303)
+@router.post("/mailpieces/{mailpiece_id}/mark-returned")
+def mark_returned(db: Db, mailpiece: MailpieceById):
+    if mailpiece.mail_return is not None:
+        raise HTTPException(status_code=409)
+    db.add(MailReturn(mailpiece=mailpiece))
+    db.add(MailpieceDraft(edition=mailpiece.edition, user=mailpiece.user))
+    return RedirectResponse(f"/admin/editions/{mailpiece.edition_id}", status_code=303)
 
 
 @router.get("/editions/{edition_id}/labels.csv")
 def export_labels(db: Db, edition: EditionById):
     columns = [field.name for field in fields(AddressComponents)]
     rows = [
-        [getattr(recipient.normalized_address, column) for column in columns]
-        for recipient in EditionMailingView.from_edition(db, edition).base.ready
+        [getattr(draft.normalized_address, column) for column in columns]
+        for draft in EditionMailpiecesView.from_edition(db, edition).ready_drafts
     ]
     return csv_response(f"edition-{edition.id}-to-send.csv", columns, rows)
-
-
-@router.get("/editions/{edition_id}/labels-late.csv")
-def export_late_labels(
-    db: Db,
-    edition: EditionById,
-    user_id: Annotated[list[str] | None, Query()] = None,
-):
-    selected_ids = set(user_id or ())
-    columns = [field.name for field in fields(AddressComponents)]
-    rows = [
-        [getattr(recipient.normalized_address, column) for column in columns]
-        for recipient in EditionMailingView.from_edition(db, edition).late.ready
-        if recipient.user.id in selected_ids
-    ]
-    return csv_response(f"edition-{edition.id}-late-to-send.csv", columns, rows)
 
 
 @router.get("/addresses/{address_id}/normalize")

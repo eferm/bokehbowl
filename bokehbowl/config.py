@@ -84,7 +84,7 @@ def load_config() -> AppConfig:
         mail=MAIL_BACKENDS[os.environ.get("MAIL_BACKEND", "console")](),
         operator_name=os.environ.get("OPERATOR_NAME", "the operator of this instance"),
         operator_email=operator_email,
-        operator_tz=ZoneInfo(os.environ.get("OPERATOR_TZ", "UTC")),
+        operator_tz=ZoneInfo(os.environ.get("OPERATOR_TZ", "America/New_York")),
         notify_email=os.environ.get("NOTIFY_EMAIL") or operator_email,
         commit=os.environ.get("GIT_COMMIT") or read_git_commit(),
     )

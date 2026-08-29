@@ -135,6 +135,29 @@ class User(Base):
         """The latest print version of the current address, if one exists."""
         return self.current_address.current_normalized_address
 
+    @property
+    def sendable_normalized_address(self) -> "NormalizedAddress | None":
+        """The current print version when it has no recorded return."""
+        normalized = self.current_normalized_address
+        if normalized is None:
+            return None
+        if any(
+            mailpiece.normalized_address_id == normalized.id
+            and mailpiece.mail_return is not None
+            for mailpiece in self.mailpieces
+        ):
+            return None
+        return normalized
+
+    @property
+    def has_returned_mail_at_current_address(self) -> bool:
+        """Whether a mailpiece sent to the current address was returned."""
+        return any(
+            mailpiece.mail_return is not None
+            for mailpiece in self.mailpieces
+            if mailpiece.normalized_address.address_id == self.current_address.id
+        )
+
 
 class UserSession(Base):
     """One authenticated browser session for a user."""
@@ -230,6 +253,9 @@ class Edition(Base):
     deleted_at: Mapped[datetime | None]
 
     mailpieces: Mapped[list["Mailpiece"]] = relationship(back_populates="edition")
+    drafts: Mapped[list["MailpieceDraft"]] = relationship(
+        back_populates="edition", cascade="all, delete-orphan"
+    )
 
     @property
     def sent_mailpieces(self) -> int:
@@ -240,6 +266,23 @@ class Edition(Base):
         """Soft-delete the edition without replacing its original archive time."""
         if self.deleted_at is None:
             self.deleted_at = now
+
+
+class MailpieceDraft(Base):
+    """One planned physical copy of an edition for a user."""
+
+    __tablename__ = "drafts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    edition_id: Mapped[str] = mapped_column(
+        ForeignKey("editions.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+
+    edition: Mapped[Edition] = relationship(back_populates="drafts")
+    user: Mapped[User] = relationship()
 
 
 class Mailpiece(Base):
@@ -255,7 +298,6 @@ class Mailpiece(Base):
             name="fk_mailpieces_normalized_address_user",
             ondelete="CASCADE",
         ),
-        UniqueConstraint("edition_id", "user_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -272,11 +314,20 @@ class Mailpiece(Base):
     normalized_address: Mapped[NormalizedAddress] = relationship(
         foreign_keys=(normalized_address_id,)
     )
+    mail_return: Mapped["MailReturn | None"] = relationship(back_populates="mailpiece")
 
-    @property
-    def mailing_group(self) -> str:
-        """The edition group this recipient belongs to, derived from signup time."""
-        return "base" if self.user.created_at <= self.edition.created_at else "late"
+
+class MailReturn(Base):
+    """A physical mailpiece received back from the postal service."""
+
+    __tablename__ = "returns"
+
+    mailpiece_id: Mapped[str] = mapped_column(
+        ForeignKey("mailpieces.id", ondelete="CASCADE"), primary_key=True
+    )
+    received_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    mailpiece: Mapped[Mailpiece] = relationship(back_populates="mail_return")
 
 
 class LoginCode(Base):

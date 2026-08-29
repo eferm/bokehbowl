@@ -1,38 +1,10 @@
 {% extends "base.html" %}
 {% from "components/address.html" import address_lines %}
-{% macro normalize_link(edition, address) %}
-        <a class="button-link" href="/admin/addresses/{{ address.id }}/normalize?edition={{ edition.id }}">Normalize</a>
-{%- endmacro %}
-{% macro approve_form(edition, address, csrf) %}
-        <form method="post" action="/admin/addresses/{{ address.id }}/normalize">
-          <input type="hidden" name="csrf" value="{{ csrf }}">
-          <input type="hidden" name="edition" value="{{ edition.id }}">
-          <input type="hidden" name="name" value="{{ address.addressee }}">
-          <input type="hidden" name="address_line1" value="{{ address.address_line1 }}">
-          <input type="hidden" name="address_line2" value="{{ address.address_line2 or '' }}">
-          <input type="hidden" name="city" value="{{ address.city }}">
-          <input type="hidden" name="region" value="{{ address.region or '' }}">
-          <input type="hidden" name="postal_code" value="{{ address.postal_code }}">
-          <input type="hidden" name="country" value="{{ address.country }}">
-          <button type="submit">Approve</button>
-        </form>
-{%- endmacro %}
-{% macro mark_sent_form(edition, user, normalized_address, csrf) %}
-        <form method="post" action="/admin/editions/{{ edition.id }}/send/{{ user.id }}">
-          <input type="hidden" name="csrf" value="{{ csrf }}">
-          <input type="hidden" name="normalized_address_id" value="{{ normalized_address.id }}">
-          <button type="submit">Mark sent</button>
-        </form>
-{%- endmacro %}
-{% macro mailing_columns() %}
-  <colgroup>
-    <col class="mailing-column--name">
-    <col class="mailing-column--address">
-    <col class="mailing-column--detail">
-    <col class="mailing-column--normalize">
-    <col class="mailing-column--primary-action">
-    <col class="mailing-column--secondary-action">
-  </colgroup>
+{% macro remove_form(edition, draft, csrf) %}
+<form method="post" action="/admin/editions/{{ edition.id }}/drafts/{{ draft.id }}/remove">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button type="submit">Remove</button>
+</form>
 {%- endmacro %}
 {% block title %}{{ edition.title }} - Bokehbowl{% endblock %}
 {% block body_class %}admin{% endblock %}
@@ -40,142 +12,83 @@
 <p><a href="/admin?table=editions">&larr; all editions</a></p>
 <h1>{{ edition.title }}</h1>
 <p>Created {{ edition.created_at.date() }}.</p>
-<p><a class="button-link" href="/admin/editions/{{ edition.id }}/delete">Delete edition</a></p>
 
-<h2>To send ({{ mailing.base.count }})</h2>
-{% if mailing.base.review %}
-<h3>Needs review ({{ mailing.base.review | length }})</h3>
-<div class="table-scroll">
-<table class="mailing-table">
-  {{ mailing_columns() }}
-  <thead>
-    <tr><th>Name</th><th>Address</th><th>Email</th><th></th><th></th><th></th></tr>
-  </thead>
-  <tbody>
-    {% for recipient in mailing.base.review %}
-    <tr>
-      <td>{{ recipient.address.addressee }}</td>
-      <td>{{ address_lines(recipient.address) }}</td>
-      <td>{{ recipient.user.email }}</td>
-      <td>{{ normalize_link(edition, recipient.address) }}</td>
-      <td>{{ approve_form(edition, recipient.address, csrf) }}</td>
-      <td></td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="edition-actions">
+  {% if mailing.ready_drafts %}
+  <a class="button-link" href="/admin/editions/{{ edition.id }}/labels.csv">Export Ready Addresses</a>
+  {% endif %}
+  <a class="button-link" href="/admin/editions/{{ edition.id }}/delete">Delete Edition</a>
 </div>
-{% endif %}
 
-<h3>Ready to send ({{ mailing.base.ready | length }})</h3>
-<form method="get" action="/admin/editions/{{ edition.id }}/labels.csv">
-  <p><button type="submit">Export to CSV</button></p>
+<h2>Mailpieces</h2>
+{% if draft_candidates %}
+<form class="form-stack--inline" method="post" action="/admin/editions/{{ edition.id }}/drafts">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label class="form-label" for="user_id">Add Mailpiece Draft
+    <span class="select-control">
+      <select class="form-control" id="user_id" name="user_id" required>
+        <option value="">Choose a Recipient</option>
+        {% set edition_user_ids = mailing.edition_user_ids %}
+        {% for user in draft_candidates %}
+        <option value="{{ user.id }}">{% if user.id not in edition_user_ids %}NEW: {% endif %}{{ user.current_address.addressee }} &lt;{{ user.email }}&gt;</option>
+        {% endfor %}
+      </select>
+    </span>
+  </label>
+  <button type="submit">Add Draft</button>
 </form>
-<div class="table-scroll">
-<table class="mailing-table">
-  {{ mailing_columns() }}
-  <thead>
-    <tr><th>Name</th><th>Normalized address</th><th>Email</th><th></th><th></th><th></th></tr>
-  </thead>
-  <tbody>
-    {% for recipient in mailing.base.ready %}
-    <tr>
-      <td>{{ recipient.normalized_address.addressee }}</td>
-      <td>{{ address_lines(recipient.normalized_address) }}</td>
-      <td>{{ recipient.user.email }}</td>
-      <td>{{ normalize_link(edition, recipient.address) }}</td>
-      <td>{{ mark_sent_form(edition, recipient.user, recipient.normalized_address, csrf) }}</td>
-      <td></td>
-    </tr>
-    {% else %}
-    <tr><td colspan="6">Nobody left to send to.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-
-{% if mailing.late.count %}
-<hr>
-<details>
-  <summary>Later signups ({{ mailing.late.count }})</summary>
-  <p>Review addresses, select the ready recipients you want to include, then export a catch-up CSV for envelope printing.</p>
-  {% if mailing.late.review %}
-  <h3>Needs review ({{ mailing.late.review | length }})</h3>
-  <div class="table-scroll">
-  <table class="mailing-table">
-    {{ mailing_columns() }}
-    <thead>
-      <tr><th>Name</th><th>Address</th><th>Email</th><th></th><th></th><th></th></tr>
-    </thead>
-    <tbody>
-      {% for recipient in mailing.late.review %}
-      <tr>
-        <td>{{ recipient.address.addressee }}</td>
-        <td>{{ address_lines(recipient.address) }}</td>
-        <td>{{ recipient.user.email }}</td>
-        <td>{{ normalize_link(edition, recipient.address) }}</td>
-        <td>{{ approve_form(edition, recipient.address, csrf) }}</td>
-        <td></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% endif %}
-  {% if mailing.late.ready %}
-  <h3>Ready to send ({{ mailing.late.ready | length }})</h3>
-  <div class="table-scroll">
-  <table class="mailing-table">
-    {{ mailing_columns() }}
-    <thead>
-      <tr><th>Name</th><th>Normalized address</th><th>Email</th><th></th><th></th><th>Export</th></tr>
-    </thead>
-    <tbody>
-      {% for recipient in mailing.late.ready %}
-      <tr>
-        <td>{{ recipient.normalized_address.addressee }}</td>
-        <td>{{ address_lines(recipient.normalized_address) }}</td>
-        <td>{{ recipient.user.email }}</td>
-        <td>{{ normalize_link(edition, recipient.address) }}</td>
-        <td>{{ mark_sent_form(edition, recipient.user, recipient.normalized_address, csrf) }}</td>
-        <td><label class="table-selection"><input type="checkbox" name="user_id" value="{{ recipient.user.id }}" form="later-signup-export"> Include</label></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  <form id="later-signup-export" method="get" action="/admin/editions/{{ edition.id }}/labels-late.csv">
-    <p><button type="submit">Export selected to CSV</button></p>
-  </form>
-  {% endif %}
-</details>
 {% endif %}
-
-<h2>Sent ({{ mailing.sent | length }})</h2>
 <div class="table-scroll">
 <table class="mailing-table">
-  {{ mailing_columns() }}
+  <colgroup>
+    <col class="mailing-column--recipient">
+    <col class="mailing-column--address">
+    <col class="mailing-column--status">
+    <col class="mailing-column--action">
+  </colgroup>
   <thead>
-    <tr><th>Name</th><th>Address on envelope</th><th>Group</th><th>Sent</th><th></th><th></th></tr>
+    <tr><th>Recipient</th><th>Address</th><th>Status</th><th>Action</th></tr>
   </thead>
   <tbody>
-    {% for s in mailing.sent %}
-    {% set printed = s.normalized_address %}
+    {% for row in mailing.rows %}
     <tr>
-      <td>{{ printed.addressee }}</td>
-      <td>{{ address_lines(printed) }}</td>
-      <td>{{ s.mailing_group | capitalize }}</td>
-      <td>{{ s.sent_on }}</td>
+      <td>{{ row.mailing_address.addressee }}<br>{{ row.user.email }}</td>
+      <td>{{ address_lines(row.mailing_address) }}</td>
       <td>
-        <form method="post" action="/admin/mailpieces/{{ s.id }}/delete">
-          <input type="hidden" name="csrf" value="{{ csrf }}">
-          <button type="submit">Undo</button>
-        </form>
+        {% if row.kind == "review" %}
+        Needs review
+        {% elif row.kind == "ready" %}
+        Ready
+        {% elif row.kind == "unsubscribed" %}
+        Unsubscribed
+        {% elif row.kind == "returned" %}
+        Sent {{ row.mailpiece.sent_on }}<br>Returned {{ row.mailpiece.mail_return.received_at.date() }}
+        {% else %}
+        Sent {{ row.mailpiece.sent_on }}
+        {% endif %}
       </td>
-      <td></td>
+      <td>
+        {% if row.kind in ("review", "ready", "unsubscribed") %}
+        <div class="table-actions">
+          <a class="button-link" href="/admin/addresses/{{ row.user.current_address.id }}/normalize?edition={{ edition.id }}">Normalize</a>
+          {% if row.kind == "ready" %}
+          <form method="post" action="/admin/editions/{{ edition.id }}/drafts/{{ row.draft.id }}/mark-sent">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit">Mark Sent</button>
+          </form>
+          {% endif %}
+          {{ remove_form(edition, row.draft, csrf) }}
+        </div>
+        {% elif row.kind == "sent" %}
+        <form method="post" action="/admin/mailpieces/{{ row.mailpiece.id }}/mark-returned">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit">Mark Returned</button>
+        </form>
+        {% endif %}
+      </td>
     </tr>
     {% else %}
-    <tr><td colspan="6">None sent yet.</td></tr>
+    <tr><td colspan="4">No mailpieces yet.</td></tr>
     {% endfor %}
   </tbody>
 </table>

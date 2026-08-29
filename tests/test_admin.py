@@ -14,6 +14,8 @@ from bokehbowl.db import (
     AddressComponents,
     Edition,
     Mailpiece,
+    MailpieceDraft,
+    MailReturn,
     NormalizedAddress,
     User,
 )
@@ -41,10 +43,16 @@ def sole_mailpiece_id(client) -> str:
         return db.scalars(select(Mailpiece.id)).one()
 
 
-def normalized_address_id_from(page_html: str) -> str:
-    """The normalized_address_id the page's mark-sent form would submit."""
-    return re.search(r'name="normalized_address_id" value="([^"]*)"', page_html).group(
-        1
+def sole_draft_id(client) -> str:
+    with Session(client.app.state.engine) as db:
+        return db.scalars(select(MailpieceDraft.id)).one()
+
+
+def mark_sole_draft_sent(client, csrf, detail_url, *, follow_redirects=True):
+    return client.post(
+        f"{detail_url}/drafts/{sole_draft_id(client)}/mark-sent",
+        data={"csrf": csrf},
+        follow_redirects=follow_redirects,
     )
 
 
@@ -84,9 +92,7 @@ def submit_normalize_form_as_prefilled(client, address_id: str) -> None:
     start = page.index('<form class="form-stack"')
     form = page[start : page.index("</form>", start)]
     fields = dict(re.findall(r'name="([^"]+)"(?: value="([^"]*)")?', form))
-    fields["country"] = re.search(
-        r'<option value="([^"]+)" selected>', form
-    ).group(1)
+    fields["country"] = re.search(r'<option value="([^"]+)" selected>', form).group(1)
     response = client.post(path, data=fields, follow_redirects=False)
     assert response.status_code == 303
 
@@ -138,9 +144,7 @@ def test_users_table_shows_db_columns(client, mailer):
         assert f"<th>{column}</th>" in page.text
 
 
-def test_users_table_shows_current_address_and_its_normalized_address(
-    client, mailer
-):
+def test_users_table_shows_current_address_and_its_normalized_address(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
     normalize_current_address(client, csrf, address_line1="12 Analytical Way, Flat 3")
@@ -202,14 +206,7 @@ def test_editions_table_shows_sent_mailpiece_count(client, mailer):
     csrf = admin_login(client)
     normalize_current_address(client, csrf)
     detail_url = create_edition(client, csrf)
-    detail = client.get(detail_url).text
-    client.post(
-        f"{detail_url}/send/{sole_user_id(client)}",
-        data={
-            "csrf": csrf,
-            "normalized_address_id": normalized_address_id_from(detail),
-        },
-    )
+    mark_sole_draft_sent(client, csrf, detail_url)
 
     table = client.get("/admin?table=editions").text
     assert "<th>sent_mailpieces</th>" in table
@@ -224,7 +221,7 @@ def test_deleting_an_edition_archives_it(client, mailer):
     confirmation = client.get(f"{detail_url}/delete").text
     assert "Delete “temporary edition”?" in confirmation
     assert f'action="{detail_url}/delete"' in confirmation
-    assert "Confirm delete" in confirmation
+    assert "Confirm Delete" in confirmation
     with Session(client.app.state.engine) as db:
         assert db.get(Edition, edition_id).deleted_at is None
 
@@ -252,7 +249,6 @@ def test_mailpieces_table_renders_empty(client, mailer):
         "edition_id",
         "user_id",
         "normalized_address_id",
-        "mailing_group",
     ]:
         assert f"<th>{column}</th>" in page.text
     assert "Nothing here yet." in page.text
@@ -278,7 +274,7 @@ def test_admin_unsubscribe_requires_confirmation(client, mailer):
 
     confirmation = client.get(f"/admin/users/{user_id}/unsubscribe").text
     assert "Unsubscribe ada@example.com?" in confirmation
-    assert "Confirm unsubscribe" in confirmation
+    assert "Confirm Unsubscribe" in confirmation
     with Session(client.app.state.engine) as db:
         assert db.get(User, user_id).unsubscribed_at is None
 
@@ -297,25 +293,20 @@ def test_admin_resubscribe(client, mailer):
     assert "Unsubscribe" in page
 
 
-def test_unsubscribed_user_can_log_in_and_resubscribe(client, mailer):
+def test_admin_unsubscribe_preserves_the_user_session(client, mailer):
     sign_up_and_verify(client, mailer)
     admin_csrf = admin_login(client)
     user_id = sole_user_id(client)
     client.post(f"/admin/users/{user_id}/unsubscribe", data={"csrf": admin_csrf})
 
-    csrf = csrf_from(client.get("/").text)
-    client.post("/signup", data={**SIGNUP_FORM, "csrf": csrf})
-    response = client.post(
-        "/signup/verify",
-        data={**SIGNUP_FORM, "csrf": csrf, "code": mailer.last_code()},
-        follow_redirects=False,
-    )
-    assert response.status_code == 303
+    account = client.get("/account")
+    assert account.status_code == 200
+    assert "currently <strong>unsubscribed</strong>" in account.text
     with Session(client.app.state.engine) as db:
         user = db.scalars(select(User)).one()
         assert user.unsubscribed_at is not None
 
-    account_csrf = csrf_from(client.get("/account").text)
+    account_csrf = csrf_from(account.text)
     client.post("/account/resubscribe", data={"csrf": account_csrf})
     with Session(client.app.state.engine) as db:
         assert db.scalar(select(User.unsubscribed_at)) is None
@@ -332,46 +323,57 @@ def create_edition(client, csrf, title="sailboat postcard") -> str:
 def test_edition_workflow(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
-    user_id = sole_user_id(client)
     detail_url = create_edition(client, csrf)
 
     detail = client.get(detail_url).text
     assert 'class="admin"' in detail
     assert "<h1>sailboat postcard</h1>" in detail
-    assert "<h2>To send (1)</h2>" in detail
-    assert "<h3>Needs review (1)</h3>" in detail
-    assert "<h3>Ready to send (0)</h3>" in detail
+    assert "<h2>Mailpieces</h2>" in detail
+    assert "Needs review" in detail
     assert "Ada Lovelace" in detail
+    assert "Normalize" in detail
+    assert "Remove" in detail
+    assert "Mark Sent" not in detail
 
     normalize_current_address(client, csrf)
     detail = client.get(detail_url).text
     assert "Needs review" not in detail
-    assert "<h2>To send (1)</h2>" in detail
-    assert "<h3>Ready to send (1)</h3>" in detail
+    assert "Ready" in detail
+    assert "Export Ready Addresses" in detail
+    assert "Mark Sent" in detail
 
-    normalized_id = normalized_address_id_from(detail)
-    client.post(
-        f"{detail_url}/send/{user_id}",
-        data={"csrf": csrf, "normalized_address_id": normalized_id},
-    )
+    draft_id = sole_draft_id(client)
+    mark_sole_draft_sent(client, csrf, detail_url)
     detail = client.get(detail_url).text
-    assert "To send (0)" in detail
-    assert "Sent (1)" in detail
-    assert "<th>Group</th>" in detail
-    assert "<td>Base</td>" in detail
+    assert "Sent " in detail
+    assert "Mark Returned" in detail
+    assert "Mark Sent" not in detail
+    with Session(client.app.state.engine) as db:
+        assert len(db.scalars(select(Mailpiece)).all()) == 1
+        assert db.scalars(select(MailpieceDraft)).all() == []
 
-    client.post(
-        f"{detail_url}/send/{user_id}",
-        data={"csrf": csrf, "normalized_address_id": normalized_id},
+    repeated = client.post(
+        f"{detail_url}/drafts/{draft_id}/mark-sent",
+        data={"csrf": csrf},
     )
-    detail = client.get(detail_url).text
-    assert "Sent (1)" in detail
+    assert repeated.status_code == 404
 
     mailpiece_id = sole_mailpiece_id(client)
-    client.post(f"/admin/mailpieces/{mailpiece_id}/delete", data={"csrf": csrf})
+    client.post(f"/admin/mailpieces/{mailpiece_id}/mark-returned", data={"csrf": csrf})
     detail = client.get(detail_url).text
-    assert "To send (1)" in detail
-    assert "Sent (0)" in detail
+    assert "Returned " in detail
+    assert "Needs review" in detail
+    assert "Mark Sent" not in detail
+    with Session(client.app.state.engine) as db:
+        assert db.scalars(select(MailReturn)).one().mailpiece_id == mailpiece_id
+        assert len(db.scalars(select(MailpieceDraft)).all()) == 1
+
+    normalize_current_address(client, csrf)
+    assert "Needs review" in client.get(detail_url).text
+    normalize_current_address(client, csrf, address_line1="12 Analytical Way, Flat 3")
+    detail = client.get(detail_url).text
+    assert "Ready" in detail
+    assert "Mark Sent" in detail
 
 
 def test_mark_sent_records_the_operator_local_date(client, mailer, monkeypatch):
@@ -384,20 +386,14 @@ def test_mark_sent_records_the_operator_local_date(client, mailer, monkeypatch):
 
     detail = client.get(detail_url).text
     assert 'name="sent_on"' not in detail
-    response = client.post(
-        f"{detail_url}/send/{sole_user_id(client)}",
-        data={
-            "csrf": csrf,
-            "normalized_address_id": normalized_address_id_from(detail),
-        },
-    )
+    response = mark_sole_draft_sent(client, csrf, detail_url)
     assert response.status_code == 200
 
     with Session(client.app.state.engine) as db:
         mailpiece = db.scalars(select(Mailpiece)).one()
         assert mailpiece.sent_at == recorded_at
         assert mailpiece.sent_on == date(2026, 8, 3)
-    assert "<td>2026-08-03</td>" in response.text
+    assert "Sent 2026-08-03" in response.text
     raw_table = client.get("/admin?table=mailpieces").text
     assert "2026-08-04 03:30:00" in raw_table
 
@@ -408,11 +404,7 @@ def test_mailpiece_pins_current_address(client, mailer):
     csrf = admin_login(client)
     normalize_current_address(client, csrf)
     detail_url = create_edition(client, csrf)
-    normalized_id = normalized_address_id_from(client.get(detail_url).text)
-    client.post(
-        f"{detail_url}/send/{sole_user_id(client)}",
-        data={"csrf": csrf, "normalized_address_id": normalized_id},
-    )
+    mark_sole_draft_sent(client, csrf, detail_url)
     detail = client.get(detail_url).text
     assert "1 Ockham Park" in detail
     with Session(client.app.state.engine) as db:
@@ -430,30 +422,22 @@ def test_sent_mailpiece_uses_complete_formatted_address(client, mailer):
         region="Greater London",
     )
     detail_url = create_edition(client, csrf)
-    detail = client.get(detail_url).text
-    client.post(
-        f"{detail_url}/send/{sole_user_id(client)}",
-        data={
-            "csrf": csrf,
-            "normalized_address_id": normalized_address_id_from(detail),
-        },
-    )
+    mark_sole_draft_sent(client, csrf, detail_url)
 
     sent = client.get(detail_url).text
     assert "12 Analytical Way<br>Apartment 2B<br>" in sent
     assert "London, Greater London N1 9GU<br>" in sent
 
 
-def test_to_send_labels_its_address_as_normalized(client, mailer):
+def test_ready_draft_offers_normalized_address_export(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
     normalize_current_address(client, csrf)
 
     detail = client.get(create_edition(client, csrf)).text
-    assert "<th>Normalized address</th>" in detail
-    assert 'action="/admin/editions/' in detail
-    assert '/labels.csv">' in detail
-    assert '<button type="submit">Export to CSV</button>' in detail
+    assert "<th>Address</th>" in detail
+    assert 'href="/admin/editions/' in detail
+    assert '/labels.csv">Export Ready Addresses</a>' in detail
 
 
 def test_unsubscribed_excluded_from_edition_list(client, mailer):
@@ -463,7 +447,8 @@ def test_unsubscribed_excluded_from_edition_list(client, mailer):
     client.post(f"/admin/users/{user_id}/unsubscribe", data={"csrf": csrf})
     detail_url = create_edition(client, csrf)
     detail = client.get(detail_url).text
-    assert "To send (0)" in detail
+    assert "No mailpieces yet." in detail
+    assert "Ada Lovelace" not in detail
     assert "Needs review" not in detail
 
 
@@ -472,20 +457,29 @@ def test_signup_after_the_edition_is_left_off_it(client, mailer):
     detail_url = create_edition(client, csrf)
     sign_up_and_verify(client, mailer)
     normalize_current_address(client, csrf)
+    user_id = sole_user_id(client)
 
     detail = client.get(detail_url).text
-    assert "To send (0)" in detail
+    assert "No mailpieces yet." in detail
     assert "Needs review" not in detail
-    assert "<details>" in detail
-    assert "Later signups (1)" in detail
-    assert 'type="checkbox" name="user_id"' in detail
-    assert "Export selected to CSV" in detail
+    assert "NEW: Ada Lovelace &lt;ada@example.com&gt;" in detail
 
     labels = client.get(f"{detail_url}/labels.csv")
     assert "Ada Lovelace" not in labels.text
 
+    response = client.post(
+        f"{detail_url}/drafts",
+        data={"csrf": csrf, "user_id": user_id},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    detail = client.get(detail_url).text
+    assert "Ready" in detail
+    assert "NEW: Ada Lovelace" not in detail
+    assert "Ada Lovelace" in client.get(f"{detail_url}/labels.csv").text
+
     later = create_edition(client, csrf)
-    assert "To send (1)" in client.get(later).text
+    assert "Ready" in client.get(later).text
 
 
 def test_mark_sent_rejects_unsubscribed_user(client, mailer):
@@ -494,60 +488,50 @@ def test_mark_sent_rejects_unsubscribed_user(client, mailer):
     user_id = sole_user_id(client)
     detail_url = create_edition(client, csrf)
     normalize_current_address(client, csrf)
-    normalized_id = normalized_address_id_from(client.get(detail_url).text)
+    draft_id = sole_draft_id(client)
     client.post(f"/admin/users/{user_id}/unsubscribe", data={"csrf": csrf})
     response = client.post(
-        f"{detail_url}/send/{user_id}",
-        data={"csrf": csrf, "normalized_address_id": normalized_id},
+        f"{detail_url}/drafts/{draft_id}/mark-sent",
+        data={"csrf": csrf},
     )
     assert response.status_code == 409
     with Session(client.app.state.engine) as db:
         assert db.scalars(select(Mailpiece)).all() == []
 
 
-def test_later_signup_can_be_exported_and_marked_sent(client, mailer):
+def test_later_signup_can_be_added_exported_and_marked_sent(client, mailer):
     csrf = admin_login(client)
-    earlier = create_edition(client, csrf)
+    edition = create_edition(client, csrf)
     sign_up_and_verify(client, mailer)
     normalize_current_address(client, csrf)
-    later = create_edition(client, csrf)
-    normalized_id = normalized_address_id_from(client.get(later).text)
     user_id = sole_user_id(client)
 
-    label = client.get(
-        f"{earlier}/labels-late.csv", params={"user_id": user_id}
-    )
-    assert label.status_code == 200
-    assert label.headers["cache-control"] == "no-store"
-    assert f"edition-{earlier.rsplit('/', maxsplit=1)[-1]}-late-to-send.csv" in (
-        label.headers["content-disposition"]
-    )
-    assert "Ada Lovelace" in label.text
-
     response = client.post(
-        f"{earlier}/send/{user_id}",
-        data={"csrf": csrf, "normalized_address_id": normalized_id},
+        f"{edition}/drafts",
+        data={"csrf": csrf, "user_id": user_id},
         follow_redirects=False,
     )
     assert response.status_code == 303
-    detail = client.get(earlier).text
-    assert "Later signups" not in detail
-    assert "Sent (1)" in detail
-    assert "<td>Late</td>" in detail
-    mailpieces = client.get("/admin?table=mailpieces").text
-    assert "<th>mailing_group</th>" in mailpieces
-    assert "<td>late</td>" in mailpieces
+    label = client.get(f"{edition}/labels.csv")
+    assert label.status_code == 200
+    assert label.headers["cache-control"] == "no-store"
+    assert (
+        f"edition-{edition.rsplit('/', maxsplit=1)[-1]}-to-send.csv"
+        in (label.headers["content-disposition"])
+    )
+    assert "Ada Lovelace" in label.text
+
+    response = mark_sole_draft_sent(client, csrf, edition, follow_redirects=False)
+    assert response.status_code == 303
+    detail = client.get(edition).text
+    assert "Sent " in detail
+    assert "Mark Returned" in detail
     with Session(client.app.state.engine) as db:
-        mailpiece = db.scalars(select(Mailpiece)).one()
-        mailpiece_id = mailpiece.id
-
-    client.post(f"/admin/mailpieces/{mailpiece_id}/delete", data={"csrf": csrf})
-    detail = client.get(earlier).text
-    assert "Later signups" in detail
-    assert "Sent (0)" in detail
+        assert len(db.scalars(select(Mailpiece)).all()) == 1
+        assert db.scalars(select(MailpieceDraft)).all() == []
 
 
-def test_selected_ready_later_signups_export_together(client, mailer):
+def test_added_ready_drafts_export_together(client, mailer):
     csrf = admin_login(client)
     edition = create_edition(client, csrf)
     sign_up_and_verify(client, mailer)
@@ -568,43 +552,39 @@ def test_selected_ready_later_signups_export_together(client, mailer):
     with Session(client.app.state.engine) as db:
         user_ids = dict(db.execute(select(User.email, User.id)).all())
 
+    for user_id in user_ids.values():
+        response = client.post(
+            f"{edition}/drafts",
+            data={"csrf": csrf, "user_id": user_id},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+
     detail = client.get(edition).text
-    assert "Later signups (2)" in detail
-    assert detail.count('type="checkbox" name="user_id"') == 2
-    labels = client.get(
-        f"{edition}/labels-late.csv",
-        params=[
-            ("user_id", user_ids["ada@example.com"]),
-            ("user_id", user_ids["grace@example.com"]),
-        ],
-    )
+    assert len(re.findall(r"<td>\s*Ready\s*</td>", detail)) == 2
+    labels = client.get(f"{edition}/labels.csv")
     assert labels.status_code == 200
     assert "Ada Lovelace" in labels.text
     assert "Grace Hopper" in labels.text
-    empty = client.get(f"{edition}/labels-late.csv")
-    assert empty.status_code == 200
-    assert empty.text.splitlines() == [
-        ",".join(field.name for field in fields(AddressComponents))
-    ]
 
 
-def test_later_signup_needing_review_uses_the_existing_address_workflow(
-    client, mailer
-):
+def test_added_draft_needing_review_uses_the_existing_address_workflow(client, mailer):
     csrf = admin_login(client)
     edition = create_edition(client, csrf)
     sign_up_and_verify(client, mailer)
     user_id = sole_user_id(client)
 
     detail = client.get(edition).text
-    assert "Later signups" in detail
+    assert "NEW: Ada Lovelace" in detail
+    assert "No mailpieces yet." in detail
+    client.post(
+        f"{edition}/drafts",
+        data={"csrf": csrf, "user_id": user_id},
+    )
+    detail = client.get(edition).text
     assert "Needs review" in detail
     assert "Normalize" in detail
-    assert "Approve" in detail
-    assert "Export selected to CSV" not in detail
-    labels = client.get(
-        f"{edition}/labels-late.csv", params={"user_id": user_id}
-    )
+    labels = client.get(f"{edition}/labels.csv")
     assert labels.status_code == 200
     assert labels.text.splitlines() == [
         ",".join(field.name for field in fields(AddressComponents))
@@ -612,58 +592,56 @@ def test_later_signup_needing_review_uses_the_existing_address_workflow(
 
     normalize_current_address(client, csrf)
     detail = client.get(edition).text
-    assert "Ready to send (1)" in detail
-    assert "<th>Normalized address</th>" in detail
-    assert "<th>Export</th>" in detail
-    assert "table-actions--split" not in detail
+    assert "Ready" in detail
+    assert "<th>Address</th>" in detail
     assert "Normalize" in detail
-    assert "Export selected to CSV" in detail
-    assert "<th>Status</th>" not in detail
+    assert "Export Ready Addresses" in detail
+    assert "<th>Status</th>" in detail
 
 
-def test_later_signup_follows_the_live_subscription(client, mailer):
+def test_draft_candidates_follow_the_live_subscription(client, mailer):
     csrf = admin_login(client)
     edition = create_edition(client, csrf)
     sign_up_and_verify(client, mailer)
     user_id = sole_user_id(client)
-    assert "Later signups" in client.get(edition).text
+    assert "NEW: Ada Lovelace" in client.get(edition).text
 
     client.post(f"/admin/users/{user_id}/unsubscribe", data={"csrf": csrf})
-    assert "Later signups" not in client.get(edition).text
+    assert "Ada Lovelace" not in client.get(edition).text
 
     client.post(f"/admin/users/{user_id}/resubscribe", data={"csrf": csrf})
-    assert "Later signups" in client.get(edition).text
+    assert "NEW: Ada Lovelace" in client.get(edition).text
 
 
-def test_mark_sent_with_an_unknown_normalized_address_is_404(client, mailer):
+def test_mark_sent_with_an_unknown_draft_is_404(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
-    user_id = sole_user_id(client)
     detail_url = create_edition(client, csrf)
     response = client.post(
-        f"{detail_url}/send/{user_id}",
-        data={"csrf": csrf, "normalized_address_id": "nope"},
+        f"{detail_url}/drafts/nope/mark-sent",
+        data={"csrf": csrf},
     )
     assert response.status_code == 404
     with Session(client.app.state.engine) as db:
         assert db.scalars(select(Mailpiece)).all() == []
 
 
-def test_mark_sent_pins_the_form_the_page_named(client, mailer):
+def test_mark_sent_rechecks_the_current_normalized_address(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
     normalize_current_address(client, csrf)
     detail_url = create_edition(client, csrf)
-    printed = normalized_address_id_from(client.get(detail_url).text)
+    draft_id = sole_draft_id(client)
+    assert "Mark Sent" in client.get(detail_url).text
     update_account(client, OCKHAM_PARK)
-    client.post(
-        f"{detail_url}/send/{sole_user_id(client)}",
-        data={"csrf": csrf, "normalized_address_id": printed},
+    response = client.post(
+        f"{detail_url}/drafts/{draft_id}/mark-sent",
+        data={"csrf": csrf},
     )
+    assert response.status_code == 409
     with Session(client.app.state.engine) as db:
-        mailpiece = db.scalars(select(Mailpiece)).one()
-        assert mailpiece.normalized_address_id == printed
-        assert mailpiece.normalized_address.address_line1 == "12 Analytical Way"
+        assert db.scalars(select(Mailpiece)).all() == []
+        assert len(db.scalars(select(MailpieceDraft)).all()) == 1
 
 
 def test_normalized_address_used_for_mailing_but_not_account_page(client, mailer):
@@ -678,13 +656,7 @@ def test_normalized_address_used_for_mailing_but_not_account_page(client, mailer
     assert "Flat 3" in detail
     assert "Flat 3" in client.get(f"{detail_url}/labels.csv").text
 
-    client.post(
-        f"{detail_url}/send/{sole_user_id(client)}",
-        data={
-            "csrf": csrf,
-            "normalized_address_id": normalized_address_id_from(detail),
-        },
-    )
+    mark_sole_draft_sent(client, csrf, detail_url)
     with Session(client.app.state.engine) as db:
         mailpiece = db.scalars(select(Mailpiece)).one()
         assert mailpiece.normalized_address.address_line1 == "12 Analytical Way, Flat 3"
@@ -692,22 +664,20 @@ def test_normalized_address_used_for_mailing_but_not_account_page(client, mailer
     assert "12 Analytical Way, Flat 3" in client.get(detail_url).text
 
 
-def test_approve_files_the_shown_address_as_the_print_version(client, mailer):
+def test_normalize_files_the_shown_address_as_the_print_version(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
     detail_url = create_edition(client, csrf)
     detail = client.get(detail_url).text
-    assert "Needs review (1)" in detail
+    assert "Needs review" in detail
 
-    action = re.search(
-        r'<form method="post" action="(/admin/addresses/[^"]+/normalize)"', detail
+    normalize_url = re.search(
+        r'href="(/admin/addresses/[^"]+/normalize\?edition=[^"]+)"', detail
     ).group(1)
-    fields = dict(
-        re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)">', detail)
-    )
-    response = client.post(action, data=fields, follow_redirects=False)
-    assert response.status_code == 303
-    assert response.headers["location"] == detail_url
+    normalize_page = client.get(normalize_url).text
+    assert "The user entered:" in normalize_page
+    assert "Save Normalized Address" in normalize_page
+    normalize_current_address(client, csrf)
 
     with Session(client.app.state.engine) as db:
         normalized_address = db.scalars(select(NormalizedAddress)).one()
@@ -716,12 +686,10 @@ def test_approve_files_the_shown_address_as_the_print_version(client, mailer):
         assert normalized_address.postal_code == "N1 9GU"
     detail = client.get(detail_url).text
     assert "Needs review" not in detail
-    assert "To send (1)" in detail
+    assert "Ready" in detail
 
 
-def test_another_users_normalized_address_is_rejected_by_route_and_database(
-    client, mailer
-):
+def test_database_rejects_another_users_normalized_address(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = csrf_from(client.get("/").text)
     client.post("/logout", data={"csrf": csrf})
@@ -761,13 +729,7 @@ def test_another_users_normalized_address_is_rejected_by_route_and_database(
         graces_normalized_address = db.scalars(select(NormalizedAddress.id)).one()
 
     detail_url = create_edition(client, admin_csrf)
-    response = client.post(
-        f"{detail_url}/send/{ada_id}",
-        data={"csrf": admin_csrf, "normalized_address_id": graces_normalized_address},
-    )
-    assert response.status_code == 404
     with Session(client.app.state.engine) as db:
-        assert db.scalars(select(Mailpiece)).all() == []
         db.add(
             Mailpiece(
                 edition_id=detail_url.rsplit("/", 1)[-1],
@@ -788,7 +750,7 @@ def test_new_address_supersedes_the_old_rows_normalized_address(client, mailer):
 
     detail_url = create_edition(client, csrf)
     detail = client.get(detail_url).text
-    assert "Needs review (1)" in detail
+    assert "Needs review" in detail
     assert "1 Ockham Park" in detail
     labels = client.get(f"{detail_url}/labels.csv").text
     assert "Ockham" not in labels
@@ -829,9 +791,7 @@ def test_the_address_components_value_matches_the_stored_columns():
 
 
 def test_saving_the_normalize_form_untouched_appends_no_print_version(client, mailer):
-    """Approve files the address as entered. Opening Normalize afterwards
-    prefills that print version, so saving it untouched submits what is already
-    on file."""
+    """Normalize files the address as entered, then prefills that print version."""
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
     normalize_current_address(client, csrf)
@@ -863,15 +823,7 @@ def test_labels_csv_lists_pending_only(client, mailer):
     detail_url = create_edition(client, csrf)
     labels = client.get(f"{detail_url}/labels.csv")
     assert "Ada Lovelace" in labels.text
-    client.post(
-        f"{detail_url}/send/{sole_user_id(client)}",
-        data={
-            "csrf": csrf,
-            "normalized_address_id": normalized_address_id_from(
-                client.get(detail_url).text
-            ),
-        },
-    )
+    mark_sole_draft_sent(client, csrf, detail_url)
     labels = client.get(f"{detail_url}/labels.csv")
     assert "Ada Lovelace" not in labels.text
 
@@ -902,32 +854,21 @@ def test_csv_export_neutralizes_formula_cells(client, mailer):
     assert ",=HYPERLINK" not in response.text
 
 
-def test_the_database_admits_one_mailpiece_per_user_per_edition(client, mailer):
-    """Two clicks can both read the edition as unsent before either writes. The
-    UNIQUE constraint is what holds the second one out."""
+def test_multiple_drafts_create_multiple_mailpieces_for_one_user(client, mailer):
     sign_up_and_verify(client, mailer)
     csrf = admin_login(client)
     normalize_current_address(client, csrf)
     detail_url = create_edition(client, csrf)
     user_id = sole_user_id(client)
-    normalized_id = normalized_address_id_from(client.get(detail_url).text)
-    client.post(
-        f"{detail_url}/send/{user_id}",
-        data={"csrf": csrf, "normalized_address_id": normalized_id},
+    mark_sole_draft_sent(client, csrf, detail_url)
+    response = client.post(
+        f"{detail_url}/drafts",
+        data={"csrf": csrf, "user_id": user_id},
+        follow_redirects=False,
     )
+    assert response.status_code == 303
+    mark_sole_draft_sent(client, csrf, detail_url)
 
     with Session(client.app.state.engine) as db:
-        sent = db.scalars(select(Mailpiece)).one()
-        db.add(
-            Mailpiece(
-                edition_id=sent.edition_id,
-                user_id=sent.user_id,
-                normalized_address_id=sent.normalized_address_id,
-                sent_on=sent.sent_on,
-            )
-        )
-        with pytest.raises(IntegrityError):
-            db.commit()
-
-    with Session(client.app.state.engine) as db:
-        assert len(db.scalars(select(Mailpiece)).all()) == 1
+        assert len(db.scalars(select(Mailpiece)).all()) == 2
+        assert db.scalars(select(MailpieceDraft)).all() == []
