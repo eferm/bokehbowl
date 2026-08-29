@@ -4,6 +4,7 @@ from datetime import date, datetime
 from typing import get_args, get_type_hints
 
 import pytest
+from fastapi import HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -275,6 +276,7 @@ def test_admin_unsubscribe_requires_confirmation(client, mailer):
     confirmation = client.get(f"/admin/users/{user_id}/unsubscribe").text
     assert "Unsubscribe ada@example.com?" in confirmation
     assert "Confirm Unsubscribe" in confirmation
+    assert "existing sessions will remain active" in confirmation
     with Session(client.app.state.engine) as db:
         assert db.get(User, user_id).unsubscribed_at is None
 
@@ -343,6 +345,11 @@ def test_edition_workflow(client, mailer):
     assert "Mark Sent" in detail
 
     draft_id = sole_draft_id(client)
+    with Session(client.app.state.engine) as db:
+        stale_draft = db.get(MailpieceDraft, draft_id)
+        stale_edition = stale_draft.edition
+        _ = stale_draft.user.sendable_normalized_address
+        db.expunge_all()
     mark_sole_draft_sent(client, csrf, detail_url)
     detail = client.get(detail_url).text
     assert "Sent " in detail
@@ -352,6 +359,16 @@ def test_edition_workflow(client, mailer):
         assert len(db.scalars(select(Mailpiece)).all()) == 1
         assert db.scalars(select(MailpieceDraft)).all() == []
 
+    with Session(client.app.state.engine) as db:
+        with pytest.raises(HTTPException) as conflict:
+            admin.mark_sent(
+                Request({"type": "http", "app": client.app}),
+                db,
+                stale_edition,
+                stale_draft,
+            )
+        assert conflict.value.status_code == 409
+
     repeated = client.post(
         f"{detail_url}/drafts/{draft_id}/mark-sent",
         data={"csrf": csrf},
@@ -360,20 +377,30 @@ def test_edition_workflow(client, mailer):
 
     mailpiece_id = sole_mailpiece_id(client)
     client.post(f"/admin/mailpieces/{mailpiece_id}/mark-returned", data={"csrf": csrf})
+    with Session(client.app.state.engine) as db:
+        db.scalars(select(MailReturn)).one().received_at = datetime(2026, 8, 4, 0, 30)
+        db.commit()
     detail = client.get(detail_url).text
-    assert "Returned " in detail
+    assert "Returned 2026-08-03" in detail
     assert "Needs review" in detail
     assert "Mark Sent" not in detail
+    assert "We couldn't deliver your last piece of mail" in client.get("/account").text
     with Session(client.app.state.engine) as db:
         assert db.scalars(select(MailReturn)).one().mailpiece_id == mailpiece_id
         assert len(db.scalars(select(MailpieceDraft)).all()) == 1
 
     normalize_current_address(client, csrf)
     assert "Needs review" in client.get(detail_url).text
+    assert "We couldn't deliver your last piece of mail" in client.get("/account").text
     normalize_current_address(client, csrf, address_line1="12 Analytical Way, Flat 3")
     detail = client.get(detail_url).text
     assert "Ready" in detail
     assert "Mark Sent" in detail
+    assert "We couldn't deliver your last piece of mail" in client.get("/account").text
+
+    mark_sole_draft_sent(client, csrf, detail_url)
+    account = client.get("/account").text
+    assert "We couldn't deliver your last piece of mail" not in account
 
 
 def test_mark_sent_records_the_operator_local_date(client, mailer, monkeypatch):

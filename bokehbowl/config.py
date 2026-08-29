@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -37,6 +38,10 @@ class AppConfig:
     operator_tz: ZoneInfo
     notify_email: str
     commit: str | None
+
+    def operator_date(self, timestamp: datetime) -> date:
+        """The operator-local date containing a stored UTC timestamp."""
+        return timestamp.replace(tzinfo=UTC).astimezone(self.operator_tz).date()
 
 
 def load_smtp_mail() -> SmtpMail:

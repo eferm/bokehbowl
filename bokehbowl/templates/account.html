@@ -11,7 +11,7 @@
   {% elif saved %}
   <p class="form-notice" role="status">Saved.</p>
   {% endif %}
-  {% if user.has_returned_mail_at_current_address %}
+  {% if user.latest_mail_to_current_address_was_returned %}
   <aside class="account-warning" aria-labelledby="returned-mail-warning">
     <strong id="returned-mail-warning">We couldn't deliver your last piece of mail to this address.</strong>
     <span>Please check your mailing address and make any corrections. <a href="/account?edit=1">Edit your address</a>.</span>

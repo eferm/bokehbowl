@@ -62,7 +62,7 @@
         {% elif row.kind == "unsubscribed" %}
         Unsubscribed
         {% elif row.kind == "returned" %}
-        Sent {{ row.mailpiece.sent_on }}<br>Returned {{ row.mailpiece.mail_return.received_at.date() }}
+        Sent {{ row.mailpiece.sent_on }}<br>Returned {{ operator_date(row.mailpiece.mail_return.received_at) }}
         {% else %}
         Sent {{ row.mailpiece.sent_on }}
         {% endif %}

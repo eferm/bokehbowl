@@ -4,7 +4,7 @@ import csv
 import io
 import secrets
 from dataclasses import dataclass, fields
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, ClassVar, Literal, Self, override
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -511,9 +511,14 @@ def mark_sent(
     if normalized is None:
         raise HTTPException(status_code=409)
     now = utcnow()
-    sent_on = (
-        now.replace(tzinfo=UTC).astimezone(request.app.state.config.operator_tz).date()
+    sent_on = request.app.state.config.operator_date(now)
+    consumed_draft_id = db.scalar(
+        delete(MailpieceDraft)
+        .where(MailpieceDraft.id == draft.id)
+        .returning(MailpieceDraft.id)
     )
+    if consumed_draft_id is None:
+        raise HTTPException(status_code=409)
     db.add(
         Mailpiece(
             edition=edition,
@@ -523,7 +528,6 @@ def mark_sent(
             sent_on=sent_on,
         )
     )
-    db.delete(draft)
     return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)
 
 

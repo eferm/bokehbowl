@@ -150,13 +150,18 @@ class User(Base):
         return normalized
 
     @property
-    def has_returned_mail_at_current_address(self) -> bool:
-        """Whether a mailpiece sent to the current address was returned."""
-        return any(
-            mailpiece.mail_return is not None
-            for mailpiece in self.mailpieces
-            if mailpiece.normalized_address.address_id == self.current_address.id
+    def latest_mail_to_current_address_was_returned(self) -> bool:
+        """Whether the latest mailpiece sent to the current address was returned."""
+        latest = max(
+            (
+                mailpiece
+                for mailpiece in self.mailpieces
+                if mailpiece.normalized_address.address_id == self.current_address.id
+            ),
+            key=lambda mailpiece: (mailpiece.sent_at, mailpiece.id),
+            default=None,
         )
+        return latest is not None and latest.mail_return is not None
 
 
 class UserSession(Base):

@@ -65,6 +65,7 @@ def create_app(config: AppConfig, engine: Engine, mailer: Mailer) -> FastAPI:
     templates.env.globals.update(
         operator_name=config.operator_name,
         operator_email=config.operator_email,
+        operator_date=config.operator_date,
         app_commit=config.commit,
         countries=COUNTRIES,
     )
