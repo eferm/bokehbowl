@@ -537,6 +537,24 @@ button:active,
   background-color: var(--navigation-control-hover);
 }
 
+.action-danger {
+  background-color: #b04a3a;
+  color: var(--paper);
+}
+
+.action-danger:hover {
+  background-color: #963f32;
+}
+
+.action-success {
+  background-color: #356747;
+  color: var(--paper);
+}
+
+.action-success:hover {
+  background-color: #294f37;
+}
+
 .site-header a:focus-visible,
 .site-footer a:focus-visible,
 .form-control:focus-visible,

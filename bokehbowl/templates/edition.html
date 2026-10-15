@@ -3,7 +3,7 @@
 {% macro remove_form(edition, draft, csrf) %}
 <form method="post" action="/admin/editions/{{ edition.id }}/drafts/{{ draft.id }}/remove">
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  <button type="submit">Remove</button>
+  <button class="action-danger" type="submit">Remove</button>
 </form>
 {%- endmacro %}
 {% block title %}{{ edition.title }} - Bokehbowl{% endblock %}
@@ -30,7 +30,7 @@
         <option value="">Choose a Recipient</option>
         {% set edition_user_ids = mailing.edition_user_ids %}
         {% for user in draft_candidates %}
-        <option value="{{ user.id }}">{% if user.id not in edition_user_ids %}NEW: {% endif %}{{ user.current_address.addressee }} &lt;{{ user.email }}&gt;</option>
+        <option value="{{ user.id }}">{% if user.id not in edition_user_ids %}ADD: {% endif %}{{ user.current_address.addressee }} &lt;{{ user.email }}&gt;</option>
         {% endfor %}
       </select>
     </span>
@@ -51,7 +51,7 @@
   </thead>
   <tbody>
     {% for row in mailing.rows %}
-    <tr>
+    <tr{% if row.kind in ("sent", "returned") %} id="mailpiece-{{ row.mailpiece.id }}"{% endif %}>
       <td>{{ row.mailing_address.addressee }}<br>{{ row.user.email }}</td>
       <td>{{ address_lines(row.mailing_address) }}</td>
       <td>
@@ -74,7 +74,7 @@
           {% if row.kind == "ready" %}
           <form method="post" action="/admin/editions/{{ edition.id }}/drafts/{{ row.draft.id }}/mark-sent">
             <input type="hidden" name="csrf" value="{{ csrf }}">
-            <button type="submit">Mark Sent</button>
+            <button class="action-success" type="submit">Mark Sent</button>
           </form>
           {% endif %}
           {{ remove_form(edition, row.draft, csrf) }}
