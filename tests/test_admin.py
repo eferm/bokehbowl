@@ -232,8 +232,8 @@ def test_deleting_an_edition_archives_it(client, mailer):
     assert response.status_code == 303
     assert response.headers["location"] == "/admin?table=editions"
     table = client.get("/admin?table=editions").text
-    assert "temporary edition" in table
-    assert "Deleted" in table
+    assert "temporary edition" not in table
+    assert "Nothing here yet." in table
     assert f'href="{detail_url}"' not in table
     assert client.get(detail_url).status_code == 404
 
@@ -489,7 +489,7 @@ def test_signup_after_the_edition_is_left_off_it(client, mailer):
     detail = client.get(detail_url).text
     assert "No mailpieces yet." in detail
     assert "Needs review" not in detail
-    assert "NEW: Ada Lovelace &lt;ada@example.com&gt;" in detail
+    assert "ADD: Ada Lovelace &lt;ada@example.com&gt;" in detail
 
     labels = client.get(f"{detail_url}/labels.csv")
     assert "Ada Lovelace" not in labels.text
@@ -502,7 +502,7 @@ def test_signup_after_the_edition_is_left_off_it(client, mailer):
     assert response.status_code == 303
     detail = client.get(detail_url).text
     assert "Ready" in detail
-    assert "NEW: Ada Lovelace" not in detail
+    assert "ADD: Ada Lovelace" not in detail
     assert "Ada Lovelace" in client.get(f"{detail_url}/labels.csv").text
 
     later = create_edition(client, csrf)
@@ -602,7 +602,7 @@ def test_added_draft_needing_review_uses_the_existing_address_workflow(client, m
     user_id = sole_user_id(client)
 
     detail = client.get(edition).text
-    assert "NEW: Ada Lovelace" in detail
+    assert "ADD: Ada Lovelace" in detail
     assert "No mailpieces yet." in detail
     client.post(
         f"{edition}/drafts",
@@ -631,13 +631,13 @@ def test_draft_candidates_follow_the_live_subscription(client, mailer):
     edition = create_edition(client, csrf)
     sign_up_and_verify(client, mailer)
     user_id = sole_user_id(client)
-    assert "NEW: Ada Lovelace" in client.get(edition).text
+    assert "ADD: Ada Lovelace" in client.get(edition).text
 
     client.post(f"/admin/users/{user_id}/unsubscribe", data={"csrf": csrf})
     assert "Ada Lovelace" not in client.get(edition).text
 
     client.post(f"/admin/users/{user_id}/resubscribe", data={"csrf": csrf})
-    assert "NEW: Ada Lovelace" in client.get(edition).text
+    assert "ADD: Ada Lovelace" in client.get(edition).text
 
 
 def test_mark_sent_with_an_unknown_draft_is_404(client, mailer):

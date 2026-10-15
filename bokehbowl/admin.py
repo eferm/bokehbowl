@@ -9,7 +9,7 @@ from typing import Annotated, ClassVar, Literal, Self, override
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
-from sqlalchemy import delete, func, select
+from sqlalchemy import ColumnElement, delete, func, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from bokehbowl.auth import require_csrf
@@ -49,6 +49,7 @@ class TableView:
     model: type[Base]
     timestamp: InstrumentedAttribute[datetime]
     derived_properties: tuple[str, ...] = ()
+    filters: tuple[ColumnElement[bool], ...] = ()
 
 
 TABLES: dict[str, TableView] = {
@@ -59,7 +60,12 @@ TABLES: dict[str, TableView] = {
     ),
     "addresses": TableView(Address, Address.created_at),
     "normalized_addresses": TableView(NormalizedAddress, NormalizedAddress.created_at),
-    "editions": TableView(Edition, Edition.created_at, ("sent_mailpieces",)),
+    "editions": TableView(
+        Edition,
+        Edition.created_at,
+        ("sent_mailpieces",),
+        filters=(Edition.deleted_at.is_(None),),
+    ),
     "mailpieces": TableView(Mailpiece, Mailpiece.sent_at),
     "returns": TableView(MailReturn, MailReturn.received_at),
 }
@@ -155,9 +161,7 @@ def require_address(_: AdminOnly, db: Db, address_id: str) -> Address:
 UserById = Annotated[User, Depends(require_user)]
 EditionById = Annotated[Edition, Depends(require_edition)]
 MailpieceById = Annotated[Mailpiece, Depends(require_mailpiece)]
-MailpieceDraftByEdition = Annotated[
-    MailpieceDraft, Depends(require_mailpiece_draft)
-]
+MailpieceDraftByEdition = Annotated[MailpieceDraft, Depends(require_mailpiece_draft)]
 AddressById = Annotated[Address, Depends(require_address)]
 
 
@@ -176,7 +180,11 @@ def table_data(
         *(column.key for column in view.model.__table__.columns),
         *view.derived_properties,
     ]
-    records = list(db.scalars(select(view.model).order_by(view.timestamp.desc())))
+    records = list(
+        db.scalars(
+            select(view.model).where(*view.filters).order_by(view.timestamp.desc())
+        )
+    )
     return columns, [[getattr(row, column) for column in columns] for row in records]
 
 
@@ -234,7 +242,9 @@ def dashboard(
     view = require_table(table)
     columns, rows = table_data(db, view)
     counts = {
-        name: db.scalar(select(func.count()).select_from(view.model))
+        name: db.scalar(
+            select(func.count()).select_from(view.model).where(*view.filters)
+        )
         for name, view in TABLES.items()
     }
     return templates.TemplateResponse(
@@ -519,16 +529,19 @@ def mark_sent(
     )
     if consumed_draft_id is None:
         raise HTTPException(status_code=409)
-    db.add(
-        Mailpiece(
-            edition=edition,
-            user=user,
-            normalized_address=normalized,
-            sent_at=now,
-            sent_on=sent_on,
-        )
+    mailpiece = Mailpiece(
+        edition=edition,
+        user=user,
+        normalized_address=normalized,
+        sent_at=now,
+        sent_on=sent_on,
     )
-    return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)
+    db.add(mailpiece)
+    # The generated id anchors the redirect to the recorded mailpiece's row.
+    db.flush()
+    return RedirectResponse(
+        f"/admin/editions/{edition.id}#mailpiece-{mailpiece.id}", status_code=303
+    )
 
 
 @router.post("/mailpieces/{mailpiece_id}/mark-returned")

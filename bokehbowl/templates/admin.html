@@ -46,14 +46,10 @@
       </td>
       {% elif table == "editions" %}
       <td>
-        {% if row[columns.index("deleted_at")] %}
-        Deleted
-        {% else %}
         <div class="table-actions">
           <a class="button-link" href="/admin/editions/{{ row[0] }}">Open</a>
-          <a class="button-link" href="/admin/editions/{{ row[0] }}/delete">Delete</a>
+          <a class="button-link action-danger" href="/admin/editions/{{ row[0] }}/delete">Delete</a>
         </div>
-        {% endif %}
       </td>
       {% endif %}
     </tr>

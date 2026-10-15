@@ -117,8 +117,8 @@ cannot be marked sent.
   one address row, append-only. An envelope prints the latest normalized
   version of its address; an address with one is ready to send.
 - **editions** — one print run (a postcard design, a photo, a letter).
-  `deleted_at` set archives it from operational routes while the raw admin
-  table keeps the row visible.
+  `deleted_at` set archives it from admin pages, counts, and edition exports.
+  Archived rows remain stored with their mailing records.
 - **drafts** — planned physical copies. New editions seed one draft
   for every currently subscribed user; operators can add or remove drafts, and
   the same user can have several.
