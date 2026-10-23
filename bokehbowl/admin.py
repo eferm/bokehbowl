@@ -292,6 +292,10 @@ class MailpieceDraftRow:
     draft: MailpieceDraft
 
     @property
+    def anchor(self) -> str:
+        return f"draft-{self.draft.id}"
+
+    @property
     def user(self) -> User:
         return self.draft.user
 
@@ -347,6 +351,10 @@ def mailpiece_draft_row(draft: MailpieceDraft) -> DraftMailpieceRow:
 @dataclass(frozen=True)
 class MailpieceRow:
     mailpiece: Mailpiece
+
+    @property
+    def anchor(self) -> str:
+        return f"mailpiece-{self.mailpiece.id}"
 
     @property
     def user(self) -> User:
@@ -470,7 +478,6 @@ def edition_detail(
         "edition.html",
         {
             "edition": edition,
-            "focus": request.query_params.get("focus"),
             "mailing": EditionMailpiecesView.from_edition(db, edition),
             "draft_candidates": list(
                 db.scalars(
@@ -538,10 +545,12 @@ def mark_sent(
         sent_on=sent_on,
     )
     db.add(mailpiece)
-    # The generated id selects the recorded row for native HTML focus.
     db.flush()
+    rows = EditionMailpiecesView.from_edition(db, edition).rows
+    anchors = [row.anchor for row in rows]
+    anchor = anchors[max(0, anchors.index(f"mailpiece-{mailpiece.id}") - 1)]
     return RedirectResponse(
-        f"/admin/editions/{edition.id}?focus={mailpiece.id}", status_code=303
+        f"/admin/editions/{edition.id}#{anchor}", status_code=303
     )
 
 
