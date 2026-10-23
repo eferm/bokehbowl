@@ -538,10 +538,10 @@ def mark_sent(
         sent_on=sent_on,
     )
     db.add(mailpiece)
-    # Focus the recorded row on the next page; clear any navigation fragment.
+    # The generated id selects the recorded row for native HTML focus.
     db.flush()
     return RedirectResponse(
-        f"/admin/editions/{edition.id}?focus={mailpiece.id}#", status_code=303
+        f"/admin/editions/{edition.id}?focus={mailpiece.id}", status_code=303
     )
 
 
