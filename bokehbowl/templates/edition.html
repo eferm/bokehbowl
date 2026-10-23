@@ -51,7 +51,7 @@
   </thead>
   <tbody>
     {% for row in mailing.rows %}
-    <tr{% if row.kind in ("sent", "returned") %} id="mailpiece-{{ row.mailpiece.id }}"{% endif %}>
+    <tr{% if row.kind in ("sent", "returned") %} id="mailpiece-{{ row.mailpiece.id }}"{% if focus == row.mailpiece.id %} tabindex="-1" autofocus{% endif %}{% endif %}>
       <td>{{ row.mailing_address.addressee }}<br>{{ row.user.email }}</td>
       <td>{{ address_lines(row.mailing_address) }}</td>
       <td>

@@ -158,10 +158,6 @@ a {
   table-layout: fixed;
 }
 
-.mailing-table tr[id] {
-  scroll-margin-block-start: 40vh;
-}
-
 .mailing-column--recipient {
   width: 24%;
 }

@@ -470,6 +470,7 @@ def edition_detail(
         "edition.html",
         {
             "edition": edition,
+            "focus": request.query_params.get("focus"),
             "mailing": EditionMailpiecesView.from_edition(db, edition),
             "draft_candidates": list(
                 db.scalars(
@@ -537,10 +538,10 @@ def mark_sent(
         sent_on=sent_on,
     )
     db.add(mailpiece)
-    # The generated id anchors the redirect to the recorded mailpiece's row.
+    # Focus the recorded row on the next page; clear any navigation fragment.
     db.flush()
     return RedirectResponse(
-        f"/admin/editions/{edition.id}#mailpiece-{mailpiece.id}", status_code=303
+        f"/admin/editions/{edition.id}?focus={mailpiece.id}#", status_code=303
     )
 
 
