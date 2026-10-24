@@ -537,11 +537,7 @@ def mark_sent(
         sent_on=sent_on,
     )
     db.add(mailpiece)
-    # The generated id anchors the redirect to the recorded mailpiece's row.
-    db.flush()
-    return RedirectResponse(
-        f"/admin/editions/{edition.id}#mailpiece-{mailpiece.id}", status_code=303
-    )
+    return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)
 
 
 @router.post("/mailpieces/{mailpiece_id}/mark-returned")
