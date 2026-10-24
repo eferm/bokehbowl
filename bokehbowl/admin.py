@@ -292,10 +292,6 @@ class MailpieceDraftRow:
     draft: MailpieceDraft
 
     @property
-    def anchor(self) -> str:
-        return f"draft-{self.draft.id}"
-
-    @property
     def user(self) -> User:
         return self.draft.user
 
@@ -351,10 +347,6 @@ def mailpiece_draft_row(draft: MailpieceDraft) -> DraftMailpieceRow:
 @dataclass(frozen=True)
 class MailpieceRow:
     mailpiece: Mailpiece
-
-    @property
-    def anchor(self) -> str:
-        return f"mailpiece-{self.mailpiece.id}"
 
     @property
     def user(self) -> User:
@@ -545,13 +537,7 @@ def mark_sent(
         sent_on=sent_on,
     )
     db.add(mailpiece)
-    db.flush()
-    rows = EditionMailpiecesView.from_edition(db, edition).rows
-    anchors = [row.anchor for row in rows]
-    anchor = anchors[max(0, anchors.index(f"mailpiece-{mailpiece.id}") - 1)]
-    return RedirectResponse(
-        f"/admin/editions/{edition.id}#{anchor}", status_code=303
-    )
+    return RedirectResponse(f"/admin/editions/{edition.id}", status_code=303)
 
 
 @router.post("/mailpieces/{mailpiece_id}/mark-returned")

@@ -51,7 +51,7 @@
   </thead>
   <tbody>
     {% for row in mailing.rows %}
-    <tr id="{{ row.anchor }}">
+    <tr id="row-{{ loop.index }}">
       <td>{{ row.mailing_address.addressee }}<br>{{ row.user.email }}</td>
       <td>{{ address_lines(row.mailing_address) }}</td>
       <td>
@@ -72,7 +72,7 @@
         <div class="table-actions">
           <a class="button-link" href="/admin/addresses/{{ row.user.current_address.id }}/normalize?edition={{ edition.id }}">Normalize</a>
           {% if row.kind == "ready" %}
-          <form method="post" action="/admin/editions/{{ edition.id }}/drafts/{{ row.draft.id }}/mark-sent">
+          <form method="post" action="/admin/editions/{{ edition.id }}/drafts/{{ row.draft.id }}/mark-sent#row-{{ [1, loop.index0] | max }}">
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <button class="action-success" type="submit">Mark Sent</button>
           </form>

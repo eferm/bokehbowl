@@ -2,10 +2,10 @@
 
 The browser UI uses server-rendered Jinja2 templates, native HTML forms, and CSS.
 JavaScript policy: none. Form mutations use POST followed by a 303 redirect.
-Mark-sent redirects anchor to the row immediately above the recorded mailpiece
-in the rendered order, keeping that row's action visible for processing upward.
-The first row anchors to itself. Draft and recorded rows expose their HTML
-anchor through the row view models.
+Mailing rows use one-based HTML IDs in rendered order. Mark-sent form actions
+carry the preceding row's fragment; the first row targets itself. A plain 303
+redirect preserves that fragment through native browser navigation, as specified
+in [RFC 9110 §10.2.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-10.2.2).
 
 Use `pyproject.toml` and `uv.lock` as the dependency inventory. Run Python tools
 with `uv`. Application routes live in `bokehbowl/web.py` and
